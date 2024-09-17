@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package my_uber;
+
+service TaxiService {
+  rpc RegisterTaxi (TaxiInfo) returns (RegistrationResponse) {}
+  rpc UpdatePosition (Position) returns (UpdateResponse) {}
+  rpc AssignService (Empty) returns (ServiceAssignment) {}
+}
+
+message TaxiInfo {
+  int32 id = 1;
+  int32 grid_n = 2;
+  int32 grid_m = 3;
+  int32 initial_x = 4;
+  int32 initial_y = 5;
+  int32 speed = 6;
+}
+
+message Position {
+  int32 taxi_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message RegistrationResponse {
+  bool success = 1;
+}
+
+message UpdateResponse {
+  bool received = 1;
+}
+
+message ServiceAssignment {
+  bool assigned = 1;
+}
+
+message Empty {}
