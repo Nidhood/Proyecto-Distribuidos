@@ -77,3 +77,4 @@ if __name__ == "__main__":
     # Ejemplo de actualización de posición
     nueva_posicion = {'lat': 4.624335, 'lng': -74.063644}
     taxi.actualizar_posicion(nueva_posicion)
+
