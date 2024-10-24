@@ -19,7 +19,8 @@ def _initialize_pool():
         database='my_uber',
         user='nidhood',
         password='KUukuDVmnSeSOB411JLJwg',
-        sslmode='verify-full'
+        sslmode='verify-full',
+        sslrootcert='certificate/root.crt'
     )
 
 
