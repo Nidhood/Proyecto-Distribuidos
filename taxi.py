@@ -1,56 +1,79 @@
-import grpc
-import my_uber_pb2
-import my_uber_pb2_grpc
+import zmq
+import json
+import logging
+from threading import Thread
+import uuid
 import time
-import random
-import sys
+
 
 class Taxi:
-    def __init__(self, taxi_id, grid_n, grid_m, initial_x, initial_y, speed):
-        self.id = taxi_id
-        self.grid_n = grid_n
-        self.grid_m = grid_m
-        self.x = initial_x
-        self.y = initial_y
-        self.speed = speed
-        self.channel = grpc.insecure_channel('localhost:50051')
-        self.stub = my_uber_pb2_grpc.TaxiServiceStub(self.channel)
+    def __init__(self, id_taxi=None, puerto_pub=5560, puerto_sub=5559):
+        self.id_taxi = id_taxi or str(uuid.uuid4())
+        self.context = zmq.Context()
+        self.publisher = self.context.socket(zmq.PUB)
+        self.subscriber = self.context.socket(zmq.SUB)
+        self.publisher.connect(f"tcp://localhost:{puerto_pub}")
+        self.subscriber.connect(f"tcp://localhost:{puerto_sub}")
+        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "asignacion_taxi")
+        self.posicion = {'lat': 0, 'lng': 0}
+        self.estado = 'disponible'
+        self.activo = True
+        logging.info(f"Taxi {self.id_taxi} iniciado")
 
-    def register(self):
-        request = my_uber_pb2.TaxiInfo(
-            id=self.id, grid_n=self.grid_n, grid_m=self.grid_m,
-            initial_x=self.x, initial_y=self.y, speed=self.speed
-        )
-        response = self.stub.RegisterTaxi(request)
-        print(f"Taxi {self.id} registrado: {response.success}")
+    def actualizar_posicion(self, nueva_posicion):
+        self.posicion = nueva_posicion
+        mensaje = {
+            'tipo': 'posicion_taxi',
+            'id_taxi': self.id_taxi,
+            'posicion': self.posicion,
+            'estado': self.estado,
+            'timestamp': time.time()
+        }
+        self.publisher.send_string(f"posicion_taxi {json.dumps(mensaje)}")
 
-    def update_position(self):
-        if self.speed > 0:
-            direction = random.choice(['N', 'S', 'E', 'W'])
-            if direction == 'N' and self.y < self.grid_m:
-                self.y += 1
-            elif direction == 'S' and self.y > 0:
-                self.y -= 1
-            elif direction == 'E' and self.x < self.grid_n:
-                self.x += 1
-            elif direction == 'W' and self.x > 0:
-                self.x -= 1
+    def procesar_mensajes(self):
+        while self.activo:
+            try:
+                topico, mensaje = self.subscriber.recv_string().split(" ", 1)
+                datos = json.loads(mensaje)
+                if datos.get('id_taxi') == self.id_taxi:
+                    if datos.get('tipo') == 'asignacion_servicio':
+                        self.estado = 'ocupado'
+                        logging.info(f"Servicio asignado - ID: {datos['id_servicio']}")
+                        self.confirmar_servicio(datos['id_servicio'])
+            except Exception as e:
+                logging.error(f"Error procesando mensaje: {e}")
 
-        request = my_uber_pb2.Position(taxi_id=self.id, x=self.x, y=self.y)
-        response = self.stub.UpdatePosition(request)
-        print(f"Taxi {self.id} posicion actualizada a ({self.x}, {self.y}): {response.received}")
+    def confirmar_servicio(self, id_servicio):
+        mensaje = {
+            'tipo': 'confirmacion_taxi',
+            'id_taxi': self.id_taxi,
+            'id_servicio': id_servicio,
+            'timestamp': time.time()
+        }
+        self.publisher.send_string(f"confirmacion_servicio {json.dumps(mensaje)}")
 
-    def run(self):
-        self.register()
-        while True:
-            self.update_position()
-            time.sleep(30)  # Actualiza la posicion cada 30 segundos
+    def start(self):
+        Thread(target=self.procesar_mensajes).start()
+        Thread(target=self.actualizacion_periodica).start()
 
-if __name__ == '__main__':
-    if len(sys.argv) != 7:
-        print("Usage: python taxi.py <taxi_id> <grid_n> <grid_m> <initial_x> <initial_y> <speed>")
-        sys.exit(1)
+    def actualizacion_periodica(self):
+        while self.activo:
+            self.actualizar_posicion(self.posicion)
+            time.sleep(5)  # Actualizar cada 5 segundos
 
-    taxi_id, grid_n, grid_m, initial_x, initial_y, speed = map(int, sys.argv[1:])
-    taxi = Taxi(taxi_id, grid_n, grid_m, initial_x, initial_y, speed)
-    taxi.run()
+    def stop(self):
+        self.activo = False
+        self.publisher.close()
+        self.subscriber.close()
+        self.context.term()
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    taxi = Taxi()
+    taxi.start()
+
+    # Ejemplo de actualización de posición
+    nueva_posicion = {'lat': 4.624335, 'lng': -74.063644}
+    taxi.actualizar_posicion(nueva_posicion)
