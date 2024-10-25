@@ -6,6 +6,7 @@ import uuid
 
 import zmq
 
+
 class TaxiNode:
     def __init__(self, N, M, posicion_inicial, velocidad, num_servicios, puerto_pub=5557, puerto_sub=5558):
         self.id_taxi = str(uuid.uuid4())

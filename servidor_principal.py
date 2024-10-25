@@ -29,7 +29,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
         # Socket publicador para enviar mensajes al broker
         self.publisher = self.context.socket(zmq.PUB)
-        self.publisher.bind("tcp://localhost:5557")
+        self.publisher.connect("tcp://localhost:5557")
         logging.info("Servidor principal iniciado en el puerto 50052")
 
         # Suscribirse a todos los tipos de mensajes necesarios
