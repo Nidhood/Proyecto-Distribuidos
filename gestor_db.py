@@ -23,8 +23,6 @@ def _initialize_pool():
         sslrootcert='certificate/root.crt'
     )
 
-
-
 class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
     def __init__(self):
         self._pool = _initialize_pool()
@@ -164,3 +162,27 @@ class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             )
         except Exception as e:
             context.abort(grpc.StatusCode.INTERNAL, str(e))
+
+
+def serve():
+    """Inicia el servidor gRPC del gestor de base de datos"""
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    gestor_service = GestorDBService()
+    taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(gestor_service, server)
+
+    # Cambiar el puerto a 50052 para el gestor_db
+    server.add_insecure_port("[::]:50052")
+    server.start()
+    logging.info("DB manager started on port 50052")
+
+    # Mantener el servidor corriendo
+    try:
+        server.wait_for_termination()
+    except KeyboardInterrupt:
+        server.stop(0)
+        logging.info("DB manager stopped")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    serve()

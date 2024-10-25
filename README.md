@@ -227,7 +227,7 @@ python gestor_db.py
 python broker.py
 
 # Iniciar el Servidor
-python servidor.py
+python servidor_principal.py
 ```
 
 ### 2. Iniciar Clientes y Taxis
@@ -236,7 +236,7 @@ python servidor.py
 python taxi.py
 
 # Iniciar un nuevo cliente
-python cliente.py
+python usuario.py
 ```
 
 ## 📈 Monitoreo y Estadísticas
