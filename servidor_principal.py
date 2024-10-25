@@ -39,6 +39,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         # Estado interno
         self.taxis = {}  # Almacena información de taxis: {id_taxi: {posicion, estado, servicios_realizados}}
         self.servicios_activos = {}  # Almacena servicios en curso
+        self.registered_taxis = set()  # Nuevo conjunto para trackear taxis registrados
 
         # Iniciar procesamiento de mensajes
         self.active = True
@@ -107,52 +108,90 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
     def handle_taxi_registration(self, data):
         try:
-            request = taxi_service_pb2.RegisterTaxiRequest(
-                taxi_id=data['id_taxi'],
-                initial_position=taxi_service_pb2.Position(
-                    latitude=data['posicion']['lat'],
-                    longitude=data['posicion']['lng'],
-                    timestamp=str(datetime.fromtimestamp(data['timestamp']))
+            # Solo registrar si el taxi no está ya registrado
+            if data['id_taxi'] not in self.registered_taxis:
+                request = taxi_service_pb2.RegisterTaxiRequest(
+                    taxi_id=data['id_taxi'],
+                    initial_position=taxi_service_pb2.Position(
+                        latitude=data['posicion']['lat'],
+                        longitude=data['posicion']['lng'],
+                        timestamp=str(datetime.fromtimestamp(data['timestamp']))
+                    ),
+                    status='AVAILABLE'  # Agregamos el estado inicial
                 )
-            )
-            response = self.db_stub.RegisterTaxi(request)
+                response = self.db_stub.RegisterTaxi(request)
 
-            if response.success:
-                self.taxis[data['id_taxi']] = {
-                    'posicion': data['posicion'],
-                    'estado': data['estado'],
-                    'servicios_realizados': 0,
-                    'posicion_inicial': data['posicion'].copy()
-                }
-                logging.info(f"Taxi {data['id_taxi']} registrado exitosamente")
+                if response.success:
+                    self.registered_taxis.add(data['id_taxi'])  # Marcar como registrado
+                    self.taxis[data['id_taxi']] = {
+                        'posicion': data['posicion'],
+                        'estado': data['estado'],
+                        'servicios_realizados': 0,
+                        'posicion_inicial': data['posicion'].copy()
+                    }
+                    logging.info(f"Taxi {data['id_taxi']} registrado exitosamente")
+
+                    # Confirmación al taxi
+                    confirm_message = {
+                        'tipo': 'confirmacion_registro',
+                        'id_taxi': data['id_taxi'],
+                        'estado': 'success'
+                    }
+                    self.publisher.send_string(f"confirmacion_taxi {json.dumps(confirm_message)}")
+                else:
+                    logging.error(f"Error al registrar taxi: {response.message}")
+                    # Notificar error al taxi
+                    error_message = {
+                        'tipo': 'confirmacion_registro',
+                        'id_taxi': data['id_taxi'],
+                        'estado': 'error',
+                        'mensaje': response.message
+                    }
+                    self.publisher.send_string(f"confirmacion_taxi {json.dumps(error_message)}")
             else:
-                logging.error(f"Error al registrar taxi: {response.message}")
+                logging.info(f"Taxi {data['id_taxi']} ya está registrado")
 
         except Exception as e:
             logging.error(f"Error en registro de taxi: {e}")
+            # Notificar error al taxi
+            error_message = {
+                'tipo': 'confirmacion_registro',
+                'id_taxi': data['id_taxi'],
+                'estado': 'error',
+                'mensaje': str(e)
+            }
+            self.publisher.send_string(f"confirmacion_taxi {json.dumps(error_message)}")
 
     def handle_taxi_position_update(self, data):
         try:
-            request = taxi_service_pb2.UpdateTaxiPositionRequest(
-                taxi_id=data['id_taxi'],
-                position=taxi_service_pb2.Position(
-                    latitude=data['posicion']['lat'],
-                    longitude=data['posicion']['lng'],
-                    timestamp=str(datetime.fromtimestamp(data['timestamp']))
-                ),
-                status=data['estado']
-            )
-            response = self.db_stub.UpdateTaxiPosition(request)
+            # Verificar si el taxi está registrado
+            if data['id_taxi'] not in self.registered_taxis:
+                # Si no está registrado, intentar registrarlo primero
+                self.handle_taxi_registration(data)
+                return  # Retornar para evitar actualizar la posición inmediatamente
 
-            if response.success:
-                if data['id_taxi'] in self.taxis:
-                    self.taxis[data['id_taxi']].update({
-                        'posicion': data['posicion'],
-                        'estado': data['estado']
-                    })
-                    logging.info(f"Posición actualizada para taxi {data['id_taxi']}")
-            else:
-                logging.error(f"Error al actualizar posición: {response.message}")
+            # Proceder con la actualización de posición solo si el taxi está registrado
+            if data['id_taxi'] in self.registered_taxis:
+                request = taxi_service_pb2.UpdateTaxiPositionRequest(
+                    taxi_id=data['id_taxi'],
+                    position=taxi_service_pb2.Position(
+                        latitude=data['posicion']['lat'],
+                        longitude=data['posicion']['lng'],
+                        timestamp=str(datetime.fromtimestamp(data['timestamp']))
+                    ),
+                    status=data['estado']
+                )
+                response = self.db_stub.UpdateTaxiPosition(request)
+
+                if response.success:
+                    if data['id_taxi'] in self.taxis:
+                        self.taxis[data['id_taxi']].update({
+                            'posicion': data['posicion'],
+                            'estado': data['estado']
+                        })
+                        logging.info(f"Posición actualizada para taxi {data['id_taxi']}")
+                else:
+                    logging.error(f"Error al actualizar posición: {response.message}")
 
         except Exception as e:
             logging.error(f"Error en actualización de posición: {e}")

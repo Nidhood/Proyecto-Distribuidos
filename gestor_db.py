@@ -1,259 +1,290 @@
+import logging
 import grpc
 from concurrent import futures
-import logging
+import uuid
 import psycopg2
 from psycopg2 import pool
-import uuid
 from datetime import datetime
-
 import taxi_service_pb2
 import taxi_service_pb2_grpc
 
-
-def _initialize_pool():
-    return psycopg2.pool.SimpleConnectionPool(
-        minconn=1,
-        maxconn=10,
-        host='droll-rabbit-5432.7tt.aws-us-east-1.cockroachlabs.cloud',
-        port=26257,
-        database='my_uber',
-        user='nidhood',
-        password='KUukuDVmnSeSOB411JLJwg',
-        sslmode='verify-full',
-        sslrootcert='certificate/root.crt'
-    )
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
+class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
     def __init__(self):
-        self._pool = _initialize_pool()
+        self.connection_pool = self.create_connection_pool()
+
+    def create_connection_pool(self):
+        try:
+            return psycopg2.pool.SimpleConnectionPool(
+                minconn=1,
+                maxconn=10,
+                host='droll-rabbit-5432.7tt.aws-us-east-1.cockroachlabs.cloud',
+                port=26257,
+                database='my_uber',
+                user='nidhood',
+                password='KUukuDVmnSeSOB411JLJwg',
+                sslmode='verify-full',
+                sslrootcert='certificate/root.crt'
+            )
+        except Exception as e:
+            logger.error(f"Error creating connection pool: {str(e)}")
+            raise
+
+    def get_connection(self):
+        return self.connection_pool.getconn()
+
+    def return_connection(self, conn):
+        self.connection_pool.putconn(conn)
 
     def HealthCheck(self, request, context):
+        conn = None
         try:
-            with self._pool.getconn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    return taxi_service_pb2.HealthCheckResponse(
-                        status=True,
-                        message="Database connection healthy",
-                        timestamp=datetime.now().isoformat()
-                    )
+            conn = self.get_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                return taxi_service_pb2.HealthCheckResponse(
+                    status=True,
+                    message="Database connection successful",
+                    timestamp=datetime.now().isoformat()
+                )
         except Exception as e:
+            logger.error(f"Health check failed: {str(e)}")
             return taxi_service_pb2.HealthCheckResponse(
                 status=False,
-                message=str(e),
+                message=f"Database connection failed: {str(e)}",
                 timestamp=datetime.now().isoformat()
             )
+        finally:
+            if conn:
+                self.return_connection(conn)
 
-    def register_taxi(self, request, context):
+    def RegisterTaxi(self, request, context):
+        conn = None
         try:
-            logging.info(f"Registrando nuevo taxi con ID: {request.taxi_id}")
-            with self._pool.getconn() as conn:
-                with conn.cursor() as cur:
-                    taxi_id = str(uuid.uuid4()) if not request.taxi_id else request.taxi_id
-                    cur.execute("""
-                        INSERT INTO taxis (taxi_id, status, last_update)
-                        VALUES (%s, %s, CURRENT_TIMESTAMP)
-                        RETURNING taxi_id
-                    """, (taxi_id, request.status or 'AVAILABLE'))
+            conn = self.get_connection()
+            with conn.cursor() as cur:
+                # Verificar si el taxi ya existe
+                cur.execute("SELECT taxi_id FROM taxis WHERE taxi_id = %s", (request.taxi_id,))
+                if cur.fetchone():
+                    return taxi_service_pb2.RegisterTaxiResponse(
+                        success=False,
+                        message="Taxi already registered",
+                        taxi_id=request.taxi_id
+                    )
 
-                    cur.execute("""
-                        INSERT INTO taxi_locations (taxi_id, latitude, longitude)
-                        VALUES (%s, %s, %s)
+                # Registrar el nuevo taxi
+                cur.execute("""
+                    INSERT INTO taxis (
+                        taxi_id, 
+                        status, 
+                        registration_date,
+                        last_update,
+                        total_services,
+                        successful_services
+                    ) VALUES (%s, %s, %s, %s, 0, 0)
                     """, (
-                        taxi_id,
-                        request.initial_position.latitude,
-                        request.initial_position.longitude
-                    ))
-                    conn.commit()
-                    logging.info(f"Taxi {taxi_id} registrado exitosamente")
+                    request.taxi_id,
+                    request.status or 'AVAILABLE',
+                    datetime.now(),
+                    datetime.now()
+                ))
 
-            return taxi_service_pb2.RegisterTaxiResponse(
-                success=True,
-                message=f"Taxi registered successfully",
-                taxi_id=taxi_id
-            )
+                # Registrar la posición inicial
+                cur.execute("""
+                    INSERT INTO taxi_locations (
+                        taxi_id,
+                        latitude,
+                        longitude,
+                        timestamp
+                    ) VALUES (%s, %s, %s, %s)
+                    """, (
+                    request.taxi_id,
+                    request.initial_position.latitude,
+                    request.initial_position.longitude,
+                    datetime.now()
+                ))
+
+                conn.commit()
+                logger.info(f"Taxi {request.taxi_id} registrado exitosamente")
+                return taxi_service_pb2.RegisterTaxiResponse(
+                    success=True,
+                    message="Taxi registered successfully",
+                    taxi_id=request.taxi_id
+                )
+
         except Exception as e:
-            logging.error(f"Error al registrar taxi: {e}")
+            if conn:
+                conn.rollback()
+            logger.error(f"Error al registrar taxi: {str(e)}")
             return taxi_service_pb2.RegisterTaxiResponse(
                 success=False,
-                message=str(e),
-                taxi_id=""
+                message=f"Error registering taxi: {str(e)}",
+                taxi_id=request.taxi_id
             )
+        finally:
+            if conn:
+                self.return_connection(conn)
 
     def UpdateTaxiPosition(self, request, context):
+        conn = None
         try:
-            logging.info(f"Actualizando posición del taxi {request.taxi_id}")
-            with self._pool.getconn() as conn:
-                with conn.cursor() as cur:
-                    # Verificar si el taxi existe
-                    cur.execute("SELECT taxi_id FROM taxis WHERE taxi_id = %s", (request.taxi_id,))
-                    if not cur.fetchone():
-                        context.abort(grpc.StatusCode.NOT_FOUND, "Taxi not found")
+            conn = self.get_connection()
+            with conn.cursor() as cur:
+                # Verificar si el taxi existe
+                cur.execute("SELECT taxi_id FROM taxis WHERE taxi_id = %s", (request.taxi_id,))
+                if not cur.fetchone():
+                    context.set_code(grpc.StatusCode.NOT_FOUND)
+                    context.set_details("Taxi not found")
+                    return taxi_service_pb2.UpdateTaxiPositionResponse(
+                        success=False,
+                        message="Taxi not found"
+                    )
 
-                    # Actualizar estado del taxi
+                # Registrar nueva posición
+                cur.execute("""
+                    INSERT INTO taxi_locations (
+                        taxi_id,
+                        latitude,
+                        longitude,
+                        timestamp
+                    ) VALUES (%s, %s, %s, %s)
+                    RETURNING latitude, longitude
+                    """, (
+                    request.taxi_id,
+                    request.position.latitude,
+                    request.position.longitude,
+                    datetime.fromisoformat(request.timestamp) if request.timestamp else datetime.now()
+                ))
+
+                lat, lng = cur.fetchone()
+
+                # Actualizar estado del taxi si se proporciona
+                if request.status:
                     cur.execute("""
                         UPDATE taxis 
-                        SET last_update = CURRENT_TIMESTAMP,
-                            status = %s
+                        SET status = %s, last_update = %s 
                         WHERE taxi_id = %s
-                    """, (request.status, request.taxi_id))
+                        """, (request.status, datetime.now(), request.taxi_id))
 
-                    # Registrar nueva posición
-                    cur.execute("""
-                        INSERT INTO taxi_locations (taxi_id, latitude, longitude, timestamp)
-                        VALUES (%s, %s, %s, %s)
-                        RETURNING latitude, longitude, timestamp
-                    """, (
-                        request.taxi_id,
-                        request.position.latitude,
-                        request.position.longitude,
-                        datetime.now() if not request.timestamp else datetime.fromisoformat(request.timestamp)
-                    ))
+                conn.commit()
+                logger.info(f"Posición del taxi {request.taxi_id} actualizada")
 
-                    lat, lon, timestamp = cur.fetchone()
-                    conn.commit()
-                    logging.info(f"Posición del taxi {request.taxi_id} actualizada exitosamente")
-
-                    # Crear objeto Position para la respuesta
-                    confirmed_position = taxi_service_pb2.Position(
+                return taxi_service_pb2.UpdateTaxiPositionResponse(
+                    success=True,
+                    message="Position updated successfully",
+                    confirmed_position=taxi_service_pb2.Position(
                         latitude=lat,
-                        longitude=lon,
-                        timestamp=timestamp.isoformat()
+                        longitude=lng,
+                        timestamp=datetime.now().isoformat()
                     )
+                )
 
-                    return taxi_service_pb2.UpdateTaxiPositionResponse(
-                        success=True,
-                        message="Position updated successfully",
-                        confirmed_position=confirmed_position
-                    )
         except Exception as e:
-            logging.error(f"Error al actualizar posición: {e}")
+            if conn:
+                conn.rollback()
+            logger.error(f"Error al actualizar posición: {str(e)}")
             return taxi_service_pb2.UpdateTaxiPositionResponse(
                 success=False,
-                message=str(e),
-                confirmed_position=None
+                message=f"Error updating position: {str(e)}"
             )
+        finally:
+            if conn:
+                self.return_connection(conn)
 
     def CreateService(self, request, context):
+        conn = None
         try:
-            with self._pool.getconn() as conn:
-                with conn.cursor() as cur:
-                    service_id = str(uuid.uuid4())
-                    # Buscar taxi disponible más cercano
-                    cur.execute("""
-                        SELECT t.taxi_id, tl.latitude, tl.longitude
-                        FROM taxis t
-                        JOIN taxi_locations tl ON t.taxi_id = tl.taxi_id
-                        WHERE t.status = 'AVAILABLE'
-                        ORDER BY 
-                            point(%s, %s) <-> point(tl.latitude, tl.longitude)
-                        LIMIT 1
-                    """, (request.client_position.latitude, request.client_position.longitude))
-
-                    result = cur.fetchone()
-                    if not result:
-                        return taxi_service_pb2.CreateServiceResponse(
-                            success=False,
-                            message="No available taxis found"
-                        )
-
-                    taxi_id, taxi_lat, taxi_lon = result
-
-                    # Crear el servicio
-                    cur.execute("""
-                        INSERT INTO services (
-                            service_id, taxi_id, client_id, status,
-                            start_position_lat, start_position_lng
-                        ) VALUES (%s, %s, %s, 'ASSIGNED', %s, %s)
+            conn = self.get_connection()
+            with conn.cursor() as cur:
+                service_id = str(uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO services (
+                        service_id,
+                        status,
+                        request_timestamp,
+                        client_latitude,
+                        client_longitude
+                    ) VALUES (%s, 'REQUESTED', %s, %s, %s)
+                    RETURNING service_id
                     """, (
-                        service_id, taxi_id, request.client_id,
-                        request.client_position.latitude,
-                        request.client_position.longitude
-                    ))
+                    service_id,
+                    datetime.fromisoformat(request.timestamp) if request.timestamp else datetime.now(),
+                    request.client_position.latitude,
+                    request.client_position.longitude
+                ))
 
-                    # Actualizar estado del taxi
-                    cur.execute("""
-                        UPDATE taxis
-                        SET status = 'BUSY'
-                        WHERE taxi_id = %s
-                    """, (taxi_id,))
+                conn.commit()
+                return taxi_service_pb2.CreateServiceResponse(
+                    success=True,
+                    service_id=service_id,
+                    message="Service created successfully"
+                )
 
-                    conn.commit()
-
-                    taxi_position = taxi_service_pb2.Position(
-                        latitude=taxi_lat,
-                        longitude=taxi_lon
-                    )
-
-                    return taxi_service_pb2.CreateServiceResponse(
-                        success=True,
-                        service_id=service_id,
-                        assigned_taxi_id=taxi_id,
-                        message="Service created successfully",
-                        taxi_position=taxi_position
-                    )
         except Exception as e:
-            logging.error(f"Error creating service: {e}")
+            if conn:
+                conn.rollback()
+            logger.error(f"Error al crear servicio: {str(e)}")
             return taxi_service_pb2.CreateServiceResponse(
                 success=False,
-                message=str(e)
+                message=f"Error creating service: {str(e)}"
             )
+        finally:
+            if conn:
+                self.return_connection(conn)
 
     def GetAvailableTaxis(self, request, context):
+        conn = None
         try:
-            with self._pool.getconn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT t.taxi_id, t.status, t.total_services, t.successful_services,
-                               tl.latitude, tl.longitude, tl.timestamp
-                        FROM taxis t
-                        JOIN taxi_locations tl ON t.taxi_id = tl.taxi_id
-                        WHERE t.status = 'AVAILABLE'
-                        AND point(%s, %s) <-> point(tl.latitude, tl.longitude) <= %s
-                    """, (
-                        request.reference_position.latitude,
-                        request.reference_position.longitude,
-                        request.radius
-                    ))
+            conn = self.get_connection()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT t.taxi_id, t.status, t.total_services, t.successful_services,
+                           l.latitude, l.longitude, l.timestamp
+                    FROM taxis t
+                    JOIN taxi_locations l ON t.taxi_id = l.taxi_id
+                    WHERE t.status = 'AVAILABLE'
+                    AND l.timestamp = (
+                        SELECT MAX(timestamp)
+                        FROM taxi_locations l2
+                        WHERE l2.taxi_id = t.taxi_id
+                    )
+                    """)
 
-                    for row in cur:
-                        taxi_id, status, total_services, successful_services, lat, lon, timestamp = row
-                        position = taxi_service_pb2.Position(
-                            latitude=lat,
-                            longitude=lon,
+                for row in cur.fetchall():
+                    taxi_id, status, total_services, successful_services, lat, lng, timestamp = row
+                    yield taxi_service_pb2.Taxi(
+                        taxi_id=taxi_id,
+                        status=status,
+                        current_position=taxi_service_pb2.Position(
+                            latitude=float(lat),
+                            longitude=float(lng),
                             timestamp=timestamp.isoformat()
-                        )
+                        ),
+                        total_services=total_services,
+                        successful_services=successful_services
+                    )
 
-                        yield taxi_service_pb2.Taxi(
-                            taxi_id=taxi_id,
-                            status=status,
-                            current_position=position,
-                            initial_position=position,  # Podríamos obtener la posición inicial real si es necesario
-                            total_services=total_services,
-                            successful_services=successful_services
-                        )
         except Exception as e:
-            logging.error(f"Error getting available taxis: {e}")
-            context.abort(grpc.StatusCode.INTERNAL, str(e))
+            logger.error(f"Error al obtener taxis disponibles: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Error getting available taxis: {str(e)}")
+        finally:
+            if conn:
+                self.return_connection(conn)
 
 
 def serve():
-    """Inicia el servidor gRPC del gestor de base de datos"""
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    gestor_service = GestorDBService()
-    taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(gestor_service, server)
-    server.add_insecure_port("[::]:50052")
+    taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(
+        DatabaseManager(), server)
+    server.add_insecure_port('[::]:50052')
     server.start()
-    logging.info("DB manager started on port 50052")
-
-    try:
-        server.wait_for_termination()
-    except KeyboardInterrupt:
-        server.stop(0)
-        logging.info("DB manager stopped")
+    logger.info("DB manager started on port 50052")
+    server.wait_for_termination()
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+if __name__ == '__main__':
     serve()
