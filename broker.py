@@ -2,10 +2,11 @@ import logging
 from threading import Thread, Event
 
 import zmq
+import time
 
 
 class TaxiBroker:
-    def __init__(self, frontend_port=5559, backend_port=5556):
+    def __init__(self, frontend_port=5559, backend_port=5556, is_backup=False):
         """
         Inicializa el broker con los puertos especificados.
         frontend_port: Puerto para publicadores (clientes/taxis)
@@ -14,6 +15,7 @@ class TaxiBroker:
         self.context = zmq.Context()
         self.active = True
         self.stop_event = Event()
+        self.is_backup = is_backup
 
         # Socket XPUB para recibir mensajes de publicadores
         self.frontend = self.context.socket(zmq.XPUB)
@@ -28,6 +30,34 @@ class TaxiBroker:
         self.active_subscribers = set()
 
         logging.info(f"Broker iniciado - Frontend: {frontend_port}, Backend: {backend_port}")
+
+        if not self.is_backup:
+            self.heartbeat_thread = Thread(target=self.send_heartbeat)
+            self.heartbeat_thread.start()
+        else:
+            self.heartbeat_thread = Thread(target=self.receive_heartbeat)
+            self.heartbeat_thread.start()
+
+    def send_heartbeat(self):
+        while self.active:
+            self.frontend.send_string("heartbeat")
+            time.sleep(1)
+
+    def receive_heartbeat(self):
+        self.frontend.setsockopt_string(zmq.SUBSCRIBE, "heartbeat")
+        while self.active:
+            try:
+                message = self.frontend.recv_string(flags=zmq.NOBLOCK)
+                if message == "heartbeat":
+                    logging.info("Heartbeat received from primary")
+            except zmq.Again:
+                logging.info("No heartbeat received, assuming primary failure")
+                self.become_primary()
+
+    def become_primary(self):
+        self.is_backup = False
+        self.heartbeat_thread = Thread(target=self.send_heartbeat)
+        self.heartbeat_thread.start()
 
     def _monitor_subscriptions(self):
         """Monitorea las suscripciones y desuscripciones"""
@@ -84,7 +114,7 @@ class TaxiBroker:
 
 def main():
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
 

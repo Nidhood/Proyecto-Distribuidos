@@ -1,3 +1,4 @@
+import threading
 import time
 from concurrent import futures
 from datetime import datetime
@@ -14,7 +15,9 @@ import taxi_service_pb2_grpc
 
 
 class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
-    def __init__(self, db_service_address='localhost:50052'):
+    def __init__(self, db_service_address='localhost:50052', is_backup=False):
+        # Configuración de replica pasiva 
+        self.is_backup = is_backup
         # Configuración gRPC para comunicación con gestor_db
         self.message_thread = None
         self.db_channel = grpc.insecure_channel(db_service_address)
@@ -42,6 +45,36 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         # Iniciar procesamiento de mensajes
         self.active = True
         self.start_message_processing()
+
+        # Iniciar monitoreo de heartbeat
+        if not self.is_backup:
+            self.heartbeat_thread = threading.Thread(target=self.send_heartbeat)
+            self.heartbeat_thread.start()
+        else:
+            self.heartbeat_thread = threading.Thread(target=self.receive_heartbeat)
+            self.heartbeat_thread.start()
+
+    def send_heartbeat(self):
+        while self.active:
+            self.publisher.send_string("heartbeat")
+            time.sleep(1)
+
+    def receive_heartbeat(self):
+        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "heartbeat")
+        while self.active:
+            try:
+                message = self.subscriber.recv_string(flags=zmq.NOBLOCK)
+                if message == "heartbeat":
+                    print("Heartbeat received from primary")
+            except zmq.Again:
+                print("No heartbeat received, assuming primary failure")
+                self.become_primary()
+
+    def become_primary(self):
+        self.is_backup = False
+        self.heartbeat_thread = threading.Thread(target=self.send_heartbeat)
+        self.heartbeat_thread.start()
+
 
     def calcular_distancia(self, pos1, pos2):
         """Calcula la distancia euclidiana entre dos posiciones"""
@@ -249,7 +282,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
     def serve(self):
         """Inicia el servidor"""
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(self, server)
+        taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(TaxiServer(), server)
         server.add_insecure_port('[::]:50051')
         server.start()
         logging.info("Servidor iniciado en puerto 50051")

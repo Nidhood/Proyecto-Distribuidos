@@ -21,6 +21,8 @@ class UsuarioNode:
         self.suscriptor.setsockopt_string(zmq.SUBSCRIBE, "resultado_servicio")
 
         logging.info(f"Usuario {self.id_usuario} iniciado en posición {posicion}")
+        logging.info(f"Usuario {self.id_usuario} suscrito a 'resultado_servicio' en tcp://localhost:{puerto_sub}")
+
 
     def solicitar_taxi(self):
         mensaje = {
