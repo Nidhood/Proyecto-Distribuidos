@@ -6,21 +6,22 @@ import uuid
 
 
 class UsuarioNode:
-    def __init__(self, posicion, puerto_pub=5559, puerto_sub=5556):
+    def __init__(self, posicion, puerto_pub=5557, puerto_sub=5558):
         self.id_usuario = str(uuid.uuid4())
         self.posicion = posicion
         self.context = zmq.Context()
 
-        # Socket para publicar solicitudes
+        # Socket para publicar mensajes
         self.publicador = self.context.socket(zmq.PUB)
         self.publicador.connect(f"tcp://localhost:{puerto_pub}")
 
-        # Socket para recibir respuestas
+        # Socket para suscribirse a mensajes
         self.suscriptor = self.context.socket(zmq.SUB)
         self.suscriptor.connect(f"tcp://localhost:{puerto_sub}")
         self.suscriptor.setsockopt_string(zmq.SUBSCRIBE, "resultado_servicio")
-
-        logging.info(f"Usuario {self.id_usuario} iniciado en posición {posicion}")
+        logging.info(f"[USUARIO] Conectando a puertos - PUB: {puerto_pub}, SUB: {puerto_sub}")
+        time.sleep(1)
+        logging.info("[USUARIO] Conexiones establecidas")
 
     def solicitar_taxi(self):
         mensaje = {
@@ -49,7 +50,6 @@ class UsuarioNode:
         except zmq.ZMQError as e:
             logging.error(f"Error al recibir respuesta: {e}")
             return False
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

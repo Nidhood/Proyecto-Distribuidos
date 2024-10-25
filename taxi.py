@@ -8,7 +8,7 @@ import zmq
 
 
 class TaxiNode:
-    def __init__(self, N, M, posicion_inicial, velocidad, num_servicios, puerto_pub=5559, puerto_sub=5556):
+    def __init__(self, N, M, posicion_inicial, velocidad, num_servicios, puerto_pub=5557, puerto_sub=5558):
         self.id_taxi = str(uuid.uuid4())
         self.N, self.M = N, M
         self.posicion_inicial = posicion_inicial
@@ -22,11 +22,11 @@ class TaxiNode:
         # Configuración ZMQ
         self.context = zmq.Context()
         self.publisher = self.context.socket(zmq.PUB)
-        self.subscriber = self.context.socket(zmq.SUB)
         self.publisher.connect(f"tcp://localhost:{puerto_pub}")
+
+        self.subscriber = self.context.socket(zmq.SUB)
         self.subscriber.connect(f"tcp://localhost:{puerto_sub}")
         self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "asignacion_taxi")
-        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "resultado_servicio")
 
         # Registro inicial
         self.registrar_taxi()

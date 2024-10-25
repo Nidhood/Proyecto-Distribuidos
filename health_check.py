@@ -8,7 +8,7 @@ from threading import Event, Thread
 
 
 class ServerHealthCheck:
-    def __init__(self, server_address='localhost:50051', check_interval=10):
+    def __init__(self, server_address='localhost:50052', check_interval=10):
         self.monitor_thread = None
         self.server_address = server_address
         self.check_interval = check_interval

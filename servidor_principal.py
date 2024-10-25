@@ -1,10 +1,10 @@
-import time
-from concurrent import futures
-from datetime import datetime
 import json
 import logging
 import math
+import threading
+import time
 import uuid
+from datetime import datetime
 
 import grpc
 import zmq
@@ -25,11 +25,12 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
         # Socket suscriptor para recibir mensajes del broker
         self.subscriber = self.context.socket(zmq.SUB)
-        self.subscriber.connect("tcp://localhost:5556")  # Conectar al backend del broker
+        self.subscriber.connect("tcp://localhost:5558")
 
         # Socket publicador para enviar mensajes al broker
         self.publisher = self.context.socket(zmq.PUB)
-        self.publisher.connect("tcp://localhost:5559")  # Conectar al frontend del broker
+        self.publisher.bind("tcp://localhost:5557")
+        logging.info("Servidor principal iniciado en el puerto 50052")
 
         # Suscribirse a todos los tipos de mensajes necesarios
         for topic in ["solicitud_servicio", "registro_taxi", "posicion_taxi"]:
@@ -72,29 +73,37 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         return taxis_ordenados[0][0]  # Retorna el ID del taxi más cercano
 
     def start_message_processing(self):
-        import threading
+        """Inicia el procesamiento de mensajes en un thread separado"""
         self.message_thread = threading.Thread(target=self.process_zmq_messages)
         self.message_thread.daemon = True
         self.message_thread.start()
 
+        # Dar tiempo para que se establezcan las conexiones
+        time.sleep(1)
+
     def process_zmq_messages(self):
+        poller = zmq.Poller()
+        poller.register(self.subscriber, zmq.POLLIN)
+
         while self.active:
             try:
-                message = self.subscriber.recv_string()
-                if " " in message:
-                    topic, message_data = message.split(" ", 1)
-                    data = json.loads(message_data)
+                socks = dict(poller.poll(timeout=1000))
+                if self.subscriber in socks:
+                    message = self.subscriber.recv_string()
+                    if " " in message:
+                        topic, message_data = message.split(" ", 1)
+                        data = json.loads(message_data)
 
-                    if topic == "solicitud_servicio":
-                        self.handle_service_request(data)
-                    elif topic == "registro_taxi":
-                        self.handle_taxi_registration(data)
-                    elif topic == "posicion_taxi":
-                        self.handle_taxi_position_update(data)
-                else:
-                    logging.error(f"Mensaje ZMQ mal formateado: {message}")
+                        if topic == "solicitud_servicio":
+                            self.handle_service_request(data)
+                        elif topic == "registro_taxi":
+                            self.handle_taxi_registration(data)
+                        elif topic == "posicion_taxi":
+                            self.handle_taxi_position_update(data)
             except Exception as e:
                 logging.error(f"Error al procesar mensaje ZMQ: {e}")
+                if not self.active:
+                    break
 
     def handle_taxi_registration(self, data):
         try:
@@ -154,14 +163,15 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             taxi_id = self.encontrar_taxi_mas_cercano(data['posicion'])
 
             if not taxi_id:
-                # No hay taxis disponibles
                 error_message = {
                     'tipo': 'resultado_servicio',
                     'subtipo': 'error',
                     'id_cliente': data['id_cliente'],
                     'mensaje': 'No hay taxis disponibles'
                 }
+                # Modificar el topic para que coincida con la suscripción del usuario
                 self.publisher.send_string(f"resultado_servicio {json.dumps(error_message)}")
+                logging.info(f"No hay taxis disponibles para el cliente {data['id_cliente']}")
                 return
 
             # Crear servicio en la base de datos
@@ -245,33 +255,29 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         # Eliminar servicios completados
         for service_id in completed_services:
             del self.servicios_activos[service_id]
+            logging.info(f"Servicio {service_id} completado y taxi liberado")
 
-    def serve(self):
-        """Inicia el servidor"""
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(self, server)
-        server.add_insecure_port('[::]:50051')
-        server.start()
-        logging.info("Servidor iniciado en puerto 50051")
-
+    def run(self):
+        """Ejecuta el servidor en un bucle principal"""
         try:
             while True:
-                self.cleanup_completed_services()
-                time.sleep(1)
+                time.sleep(1)  # Mantiene el ciclo vivo
+                self.cleanup_completed_services()  # Limpia servicios completados
         except KeyboardInterrupt:
+            logging.info("Servidor detenido por el usuario.")
+        finally:
             self.active = False
             self.message_thread.join()
-            server.stop(0)
-            logging.info("Servidor detenido")
+            self.subscriber.close()
+            self.publisher.close()
+            self.context.term()
+            self.db_channel.close()
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     server = TaxiServer()
-    server.serve()
+    server.run()
 
 
 if __name__ == "__main__":

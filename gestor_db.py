@@ -23,6 +23,7 @@ def _initialize_pool():
         sslrootcert='certificate/root.crt'
     )
 
+
 class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
     def __init__(self):
         self._pool = _initialize_pool()
@@ -44,6 +45,7 @@ class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
     def register_taxi(self, request, context):
         try:
+            logging.info(f"Registrando nuevo taxi con ID: {request.taxi_id}")
             with self._pool.getconn() as conn:
                 with conn.cursor() as cur:
                     taxi_id = str(uuid.uuid4()) if not request.taxi_id else request.taxi_id
@@ -53,7 +55,6 @@ class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         RETURNING taxi_id
                     """, (taxi_id,))
 
-                    # Registrar posición inicial
                     cur.execute("""
                         INSERT INTO taxi_locations (taxi_id, latitude, longitude)
                         VALUES (%s, %s, %s)
@@ -63,12 +64,14 @@ class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         request.initial_position.longitude
                     ))
                     conn.commit()
+                    logging.info(f"Taxi {taxi_id} registrado exitosamente en la base de datos")
 
             return taxi_service_pb2.RegisterTaxiResponse(
                 success=True,
                 message=f"Taxi registered with ID: {taxi_id}"
             )
         except Exception as e:
+            logging.error(f"Error al registrar taxi en la base de datos: {e}")
             return taxi_service_pb2.RegisterTaxiResponse(
                 success=False,
                 message=str(e)
@@ -76,9 +79,9 @@ class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
     def update_taxi_position(self, request, context):
         try:
+            logging.info(f"Actualizando posición del taxi {request.taxi_id}")
             with self._pool.getconn() as conn:
                 with conn.cursor() as cur:
-                    # Actualizar posición actual
                     cur.execute("""
                         UPDATE taxis 
                         SET last_update = CURRENT_TIMESTAMP,
@@ -86,7 +89,6 @@ class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         WHERE taxi_id = %s
                     """, (request.status, request.taxi_id))
 
-                    # Registrar en histórico de posiciones
                     cur.execute("""
                         INSERT INTO taxi_locations (taxi_id, latitude, longitude)
                         VALUES (%s, %s, %s)
@@ -96,12 +98,14 @@ class GestorDBService(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         request.position.longitude
                     ))
                     conn.commit()
+                    logging.info(f"Posición del taxi {request.taxi_id} actualizada exitosamente")
 
             return taxi_service_pb2.UpdateTaxiPositionResponse(
                 success=True,
                 message="Position updated successfully"
             )
         except Exception as e:
+            logging.error(f"Error al actualizar posición del taxi: {e}")
             return taxi_service_pb2.UpdateTaxiPositionResponse(
                 success=False,
                 message=str(e)
