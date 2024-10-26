@@ -9,12 +9,13 @@ from datetime import datetime
 import grpc
 import zmq
 
+
 import taxi_service_pb2
 import taxi_service_pb2_grpc
 
 
-class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
-    def __init__(self, db_service_address='localhost:50052'):
+class Server(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
+    def __init__(self, db_service_address='localhost:50052', pub_broker_address='localhost:5557', sub_broker_address='localhost:5558'):
         # Configuración gRPC para comunicación con gestor_db
         self.message_thread = None
         self.db_channel = grpc.insecure_channel(db_service_address)
@@ -25,25 +26,44 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
         # Socket suscriptor para recibir mensajes del broker
         self.subscriber = self.context.socket(zmq.SUB)
-        self.subscriber.connect("tcp://localhost:5558")
+        self.subscriber.connect(f"tcp://{sub_broker_address}")
 
         # Socket publicador para enviar mensajes al broker
         self.publisher = self.context.socket(zmq.PUB)
-        self.publisher.connect("tcp://localhost:5557")
-        logging.info("Servidor principal iniciado en el puerto 50052")
+        self.publisher.connect(f"tcp://{pub_broker_address}")
+        logging.info(f"Servidor principal iniciado con el broker ({sub_broker_address}, {pub_broker_address}) y el "
+                     f"gestor_db ({db_service_address})")
 
         # Suscribirse a todos los tipos de mensajes necesarios
         for topic in ["solicitud_servicio", "registro_taxi", "posicion_taxi"]:
             self.subscriber.setsockopt_string(zmq.SUBSCRIBE, topic)
+
+        # Suscribirse a mensajes de salud
+        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "server_health_check")
 
         # Estado interno
         self.taxis = {}  # Almacena información de taxis: {id_taxi: {posicion, estado, servicios_realizados}}
         self.servicios_activos = {}  # Almacena servicios en curso
         self.registered_taxis = set()  # Nuevo conjunto para trackear taxis registrados
 
+        # Mapeo de estados
+        self.estado_mapping = {
+            'disponible': 'AVAILABLE',
+            'ocupado': 'BUSY',
+            'fuera_servicio': 'OFFLINE',
+            # Agregamos mappings adicionales según sea necesario
+            'AVAILABLE': 'AVAILABLE',
+            'BUSY': 'BUSY',
+            'OFFLINE': 'OFFLINE'
+        }
+
         # Iniciar procesamiento de mensajes
         self.active = True
         self.start_message_processing()
+
+    def map_estado(self, estado):
+        """Mapea el estado recibido al formato de la base de datos"""
+        return self.estado_mapping.get(estado.lower(), 'AVAILABLE')
 
     def calcular_distancia(self, pos1, pos2):
         """Calcula la distancia euclidiana entre dos posiciones"""
@@ -101,6 +121,13 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                             self.handle_taxi_registration(data)
                         elif topic == "posicion_taxi":
                             self.handle_taxi_position_update(data)
+                        elif topic == "server_health_check":
+                            response = {
+                                "tipo": "health_check_response",
+                                "timestamp": time.time(),
+                                "status": "active"
+                            }
+                            self.publisher.send_string(f"health_check {json.dumps(response)}")
             except Exception as e:
                 logging.error(f"Error al procesar mensaje ZMQ: {e}")
                 if not self.active:
@@ -110,6 +137,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         try:
             # Solo registrar si el taxi no está ya registrado
             if data['id_taxi'] not in self.registered_taxis:
+                # Mapear el estado al formato correcto
+                estado_db = self.map_estado(data['estado'])
+
                 request = taxi_service_pb2.RegisterTaxiRequest(
                     taxi_id=data['id_taxi'],
                     initial_position=taxi_service_pb2.Position(
@@ -117,15 +147,15 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         longitude=data['posicion']['lng'],
                         timestamp=str(datetime.fromtimestamp(data['timestamp']))
                     ),
-                    status='AVAILABLE'  # Agregamos el estado inicial
+                    status=estado_db
                 )
                 response = self.db_stub.RegisterTaxi(request)
 
                 if response.success:
-                    self.registered_taxis.add(data['id_taxi'])  # Marcar como registrado
+                    self.registered_taxis.add(data['id_taxi'])
                     self.taxis[data['id_taxi']] = {
                         'posicion': data['posicion'],
-                        'estado': data['estado'],
+                        'estado': estado_db,  # Guardamos el estado mapeado
                         'servicios_realizados': 0,
                         'posicion_inicial': data['posicion'].copy()
                     }
@@ -140,7 +170,6 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     self.publisher.send_string(f"confirmacion_taxi {json.dumps(confirm_message)}")
                 else:
                     logging.error(f"Error al registrar taxi: {response.message}")
-                    # Notificar error al taxi
                     error_message = {
                         'tipo': 'confirmacion_registro',
                         'id_taxi': data['id_taxi'],
@@ -153,7 +182,6 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
         except Exception as e:
             logging.error(f"Error en registro de taxi: {e}")
-            # Notificar error al taxi
             error_message = {
                 'tipo': 'confirmacion_registro',
                 'id_taxi': data['id_taxi'],
@@ -172,6 +200,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
             # Proceder con la actualización de posición solo si el taxi está registrado
             if data['id_taxi'] in self.registered_taxis:
+                # Mapear el estado al formato correcto
+                estado_db = self.map_estado(data['estado'])
+
                 request = taxi_service_pb2.UpdateTaxiPositionRequest(
                     taxi_id=data['id_taxi'],
                     position=taxi_service_pb2.Position(
@@ -179,7 +210,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         longitude=data['posicion']['lng'],
                         timestamp=str(datetime.fromtimestamp(data['timestamp']))
                     ),
-                    status=data['estado']
+                    status=estado_db
                 )
                 response = self.db_stub.UpdateTaxiPosition(request)
 
@@ -187,7 +218,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     if data['id_taxi'] in self.taxis:
                         self.taxis[data['id_taxi']].update({
                             'posicion': data['posicion'],
-                            'estado': data['estado']
+                            'estado': estado_db  # Guardamos el estado mapeado
                         })
                         logging.info(f"Posición actualizada para taxi {data['id_taxi']}")
                 else:
@@ -296,6 +327,48 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             del self.servicios_activos[service_id]
             logging.info(f"Servicio {service_id} completado y taxi liberado")
 
+    def ServerHealthCheck(self, request, context):
+        try:
+            current_time = datetime.now().isoformat()
+
+            # Verificar el estado del broker
+            broker_alive = True
+            try:
+                # Intentar publicar un mensaje de prueba
+                test_message = {
+                    'type': 'health_check',
+                    'timestamp': time.time()
+                }
+                self.publisher.send_string(f"health_check {json.dumps(test_message)}")
+            except zmq.ZMQError:
+                broker_alive = False
+
+            # Verificar conexión con la base de datos
+            db_alive = True
+            try:
+                self.db_stub.HealthCheck(
+                    taxi_service_pb2.HealthCheckRequest(),
+                    timeout=1
+                )
+            except grpc.RpcError:
+                db_alive = False
+
+            # El servidor está saludable si puede comunicarse tanto con el broker como con la base de datos
+            is_healthy = broker_alive and db_alive
+
+            return taxi_service_pb2.ServerHealthCheckResponse(
+                status=is_healthy,
+                message=f"Broker: {'UP' if broker_alive else 'DOWN'}, DB: {'UP' if db_alive else 'DOWN'}",
+                timestamp=current_time
+            )
+
+        except Exception as e:
+            return taxi_service_pb2.ServerHealthCheckResponse(
+                status=False,
+                message=f"Error checking server health: {str(e)}",
+                timestamp=datetime.now().isoformat()
+            )
+
     def run(self):
         """Ejecuta el servidor en un bucle principal"""
         try:
@@ -315,7 +388,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
 def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    server = TaxiServer()
+    server = Server()
     server.run()
 
 

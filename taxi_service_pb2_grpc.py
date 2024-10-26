@@ -65,6 +65,11 @@ class TaxiDatabaseServiceStub(object):
                 request_serializer=taxi__service__pb2.GetAvailableTaxisRequest.SerializeToString,
                 response_deserializer=taxi__service__pb2.Taxi.FromString,
                 _registered_method=True)
+        self.ServerHealthCheck = channel.unary_unary(
+                '/taxi_service.TaxiDatabaseService/ServerHealthCheck',
+                request_serializer=taxi__service__pb2.ServerHealthCheckRequest.SerializeToString,
+                response_deserializer=taxi__service__pb2.ServerHealthCheckResponse.FromString,
+                _registered_method=True)
 
 
 class TaxiDatabaseServiceServicer(object):
@@ -107,6 +112,12 @@ class TaxiDatabaseServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ServerHealthCheck(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_TaxiDatabaseServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -139,6 +150,11 @@ def add_TaxiDatabaseServiceServicer_to_server(servicer, server):
                     servicer.GetAvailableTaxis,
                     request_deserializer=taxi__service__pb2.GetAvailableTaxisRequest.FromString,
                     response_serializer=taxi__service__pb2.Taxi.SerializeToString,
+            ),
+            'ServerHealthCheck': grpc.unary_unary_rpc_method_handler(
+                    servicer.ServerHealthCheck,
+                    request_deserializer=taxi__service__pb2.ServerHealthCheckRequest.FromString,
+                    response_serializer=taxi__service__pb2.ServerHealthCheckResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -304,6 +320,33 @@ class TaxiDatabaseService(object):
             '/taxi_service.TaxiDatabaseService/GetAvailableTaxis',
             taxi__service__pb2.GetAvailableTaxisRequest.SerializeToString,
             taxi__service__pb2.Taxi.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ServerHealthCheck(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/taxi_service.TaxiDatabaseService/ServerHealthCheck',
+            taxi__service__pb2.ServerHealthCheckRequest.SerializeToString,
+            taxi__service__pb2.ServerHealthCheckResponse.FromString,
             options,
             channel_credentials,
             insecure,

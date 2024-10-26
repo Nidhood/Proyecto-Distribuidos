@@ -277,13 +277,18 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(
-        DatabaseManager(), server)
-    server.add_insecure_port('[::]:50052')
-    server.start()
-    logger.info("DB manager started on port 50052")
-    server.wait_for_termination()
+    try:
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        taxi_service_pb2_grpc.add_TaxiDatabaseServiceServicer_to_server(
+            DatabaseManager(), server)
+        server.add_insecure_port('[::]:50052')
+        server.start()
+        logger.info("DB manager started on port 50052")
+        server.wait_for_termination()
+
+    except KeyboardInterrupt:
+        server.stop(0)
+        logger.info("DB manager stopped by user")
 
 
 if __name__ == '__main__':

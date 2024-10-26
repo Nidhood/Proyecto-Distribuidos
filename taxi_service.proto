@@ -10,6 +10,7 @@ service TaxiDatabaseService {
     rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
     rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
     rpc GetAvailableTaxis(GetAvailableTaxisRequest) returns (stream Taxi);
+    rpc ServerHealthCheck(ServerHealthCheckRequest) returns (ServerHealthCheckResponse);
 }
 
 // Mensajes base
@@ -44,6 +45,16 @@ message HealthCheckRequest {
 }
 
 message HealthCheckResponse {
+    bool status = 1;
+    string message = 2;
+    string timestamp = 3;
+}
+
+message ServerHealthCheckRequest {
+    double timestamp = 1;
+}
+
+message ServerHealthCheckResponse {
     bool status = 1;
     string message = 2;
     string timestamp = 3;

@@ -51,6 +51,7 @@ class UsuarioNode:
             logging.error(f"Error al recibir respuesta: {e}")
             return False
 
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
