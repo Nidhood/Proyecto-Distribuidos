@@ -65,6 +65,16 @@ class TaxiDatabaseServiceStub(object):
                 request_serializer=taxi__service__pb2.GetAvailableTaxisRequest.SerializeToString,
                 response_deserializer=taxi__service__pb2.Taxi.FromString,
                 _registered_method=True)
+        self.ReplicateState = channel.unary_unary(
+                '/taxi_service.TaxiDatabaseService/ReplicateState',
+                request_serializer=taxi__service__pb2.ReplicateStateRequest.SerializeToString,
+                response_deserializer=taxi__service__pb2.ReplicateStateResponse.FromString,
+                _registered_method=True)
+        self.PromoteToPrimary = channel.unary_unary(
+                '/taxi_service.TaxiDatabaseService/PromoteToPrimary',
+                request_serializer=taxi__service__pb2.PromoteToPrimaryRequest.SerializeToString,
+                response_deserializer=taxi__service__pb2.PromoteToPrimaryResponse.FromString,
+                _registered_method=True)
 
 
 class TaxiDatabaseServiceServicer(object):
@@ -107,6 +117,18 @@ class TaxiDatabaseServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReplicateState(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PromoteToPrimary(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_TaxiDatabaseServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -139,6 +161,16 @@ def add_TaxiDatabaseServiceServicer_to_server(servicer, server):
                     servicer.GetAvailableTaxis,
                     request_deserializer=taxi__service__pb2.GetAvailableTaxisRequest.FromString,
                     response_serializer=taxi__service__pb2.Taxi.SerializeToString,
+            ),
+            'ReplicateState': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReplicateState,
+                    request_deserializer=taxi__service__pb2.ReplicateStateRequest.FromString,
+                    response_serializer=taxi__service__pb2.ReplicateStateResponse.SerializeToString,
+            ),
+            'PromoteToPrimary': grpc.unary_unary_rpc_method_handler(
+                    servicer.PromoteToPrimary,
+                    request_deserializer=taxi__service__pb2.PromoteToPrimaryRequest.FromString,
+                    response_serializer=taxi__service__pb2.PromoteToPrimaryResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -304,6 +336,60 @@ class TaxiDatabaseService(object):
             '/taxi_service.TaxiDatabaseService/GetAvailableTaxis',
             taxi__service__pb2.GetAvailableTaxisRequest.SerializeToString,
             taxi__service__pb2.Taxi.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReplicateState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/taxi_service.TaxiDatabaseService/ReplicateState',
+            taxi__service__pb2.ReplicateStateRequest.SerializeToString,
+            taxi__service__pb2.ReplicateStateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PromoteToPrimary(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/taxi_service.TaxiDatabaseService/PromoteToPrimary',
+            taxi__service__pb2.PromoteToPrimaryRequest.SerializeToString,
+            taxi__service__pb2.PromoteToPrimaryResponse.FromString,
             options,
             channel_credentials,
             insecure,

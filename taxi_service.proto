@@ -10,6 +10,8 @@ service TaxiDatabaseService {
     rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
     rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
     rpc GetAvailableTaxis(GetAvailableTaxisRequest) returns (stream Taxi);
+  rpc ReplicateState(ReplicateStateRequest) returns (ReplicateStateResponse);
+    rpc PromoteToPrimary(PromoteToPrimaryRequest) returns (PromoteToPrimaryResponse);
 }
 
 // Mensajes base
@@ -47,6 +49,19 @@ message HealthCheckResponse {
     bool status = 1;
     string message = 2;
     string timestamp = 3;
+}
+message ReplicateStateRequest {
+    string state = 1;
+}
+
+message ReplicateStateResponse {
+    bool success = 1;
+}
+
+message PromoteToPrimaryRequest {}
+
+message PromoteToPrimaryResponse {
+    bool success = 1;
 }
 
 // Registro de taxi

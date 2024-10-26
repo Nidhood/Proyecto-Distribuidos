@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package broker;
+
+service BrokerService {
+    rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+    bool status = 1;
+    string message = 2;
+    string timestamp = 3;
+}

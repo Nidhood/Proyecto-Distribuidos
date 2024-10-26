@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12taxi_service.proto\x12\x0ctaxi_service\"B\n\x08Position\x12\x10\n\x08latitude\x18\x01 \x01(\x01\x12\x11\n\tlongitude\x18\x02 \x01(\x01\x12\x11\n\ttimestamp\x18\x03 \x01(\t\"\xc0\x01\n\x04Taxi\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x30\n\x10\x63urrent_position\x18\x03 \x01(\x0b\x32\x16.taxi_service.Position\x12\x30\n\x10initial_position\x18\x04 \x01(\x0b\x32\x16.taxi_service.Position\x12\x16\n\x0etotal_services\x18\x05 \x01(\x05\x12\x1b\n\x13successful_services\x18\x06 \x01(\x05\"\xdf\x01\n\x07Service\x12\x12\n\nservice_id\x18\x01 \x01(\t\x12\x0f\n\x07taxi_id\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12/\n\x0f\x63lient_position\x18\x04 \x01(\x0b\x32\x16.taxi_service.Position\x12\x35\n\x15taxi_initial_position\x18\x05 \x01(\x0b\x32\x16.taxi_service.Position\x12\x19\n\x11request_timestamp\x18\x06 \x01(\t\x12\x1c\n\x14\x63ompletion_timestamp\x18\x07 \x01(\t\"\'\n\x12HealthCheckRequest\x12\x11\n\tcomponent\x18\x01 \x01(\t\"I\n\x13HealthCheckResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x11\n\ttimestamp\x18\x03 \x01(\t\"h\n\x13RegisterTaxiRequest\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12\x30\n\x10initial_position\x18\x02 \x01(\x0b\x32\x16.taxi_service.Position\x12\x0e\n\x06status\x18\x03 \x01(\t\"I\n\x14RegisterTaxiResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x0f\n\x07taxi_id\x18\x03 \x01(\t\"y\n\x19UpdateTaxiPositionRequest\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12(\n\x08position\x18\x02 \x01(\x0b\x32\x16.taxi_service.Position\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\t\"r\n\x1aUpdateTaxiPositionResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x32\n\x12\x63onfirmed_position\x18\x03 \x01(\x0b\x32\x16.taxi_service.Position\"m\n\x14\x43reateServiceRequest\x12\x11\n\tclient_id\x18\x01 \x01(\t\x12/\n\x0f\x63lient_position\x18\x02 \x01(\x0b\x32\x16.taxi_service.Position\x12\x11\n\ttimestamp\x18\x03 \x01(\t\"\x96\x01\n\x15\x43reateServiceResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\nservice_id\x18\x02 \x01(\t\x12\x18\n\x10\x61ssigned_taxi_id\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\x12-\n\rtaxi_position\x18\x05 \x01(\x0b\x32\x16.taxi_service.Position\"*\n\x14GetStatisticsRequest\x12\x12\n\ntime_range\x18\x01 \x01(\t\"\xbc\x01\n\tTaxiStats\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12\x16\n\x0etotal_services\x18\x02 \x01(\x05\x12\x1b\n\x13successful_services\x18\x03 \x01(\x05\x12\x34\n\x14historical_positions\x18\x04 \x03(\x0b\x32\x16.taxi_service.Position\x12\x33\n\x13last_known_position\x18\x05 \x01(\x0b\x32\x16.taxi_service.Position\"\x99\x02\n\x15GetStatisticsResponse\x12\x16\n\x0etotal_services\x18\x01 \x01(\x05\x12\x1a\n\x12\x63ompleted_services\x18\x02 \x01(\x05\x12\x17\n\x0f\x64\x65nied_services\x18\x03 \x01(\x05\x12P\n\x0ftaxi_statistics\x18\x04 \x03(\x0b\x32\x37.taxi_service.GetStatisticsResponse.TaxiStatisticsEntry\x12\x11\n\ttimestamp\x18\x05 \x01(\t\x1aN\n\x13TaxiStatisticsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12&\n\x05value\x18\x02 \x01(\x0b\x32\x17.taxi_service.TaxiStats:\x02\x38\x01\"^\n\x18GetAvailableTaxisRequest\x12\x32\n\x12reference_position\x18\x01 \x01(\x0b\x32\x16.taxi_service.Position\x12\x0e\n\x06radius\x18\x02 \x01(\x01\x32\xb0\x04\n\x13TaxiDatabaseService\x12R\n\x0bHealthCheck\x12 .taxi_service.HealthCheckRequest\x1a!.taxi_service.HealthCheckResponse\x12U\n\x0cRegisterTaxi\x12!.taxi_service.RegisterTaxiRequest\x1a\".taxi_service.RegisterTaxiResponse\x12g\n\x12UpdateTaxiPosition\x12\'.taxi_service.UpdateTaxiPositionRequest\x1a(.taxi_service.UpdateTaxiPositionResponse\x12X\n\rCreateService\x12\".taxi_service.CreateServiceRequest\x1a#.taxi_service.CreateServiceResponse\x12X\n\rGetStatistics\x12\".taxi_service.GetStatisticsRequest\x1a#.taxi_service.GetStatisticsResponse\x12Q\n\x11GetAvailableTaxis\x12&.taxi_service.GetAvailableTaxisRequest\x1a\x12.taxi_service.Taxi0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12taxi_service.proto\x12\x0ctaxi_service\"B\n\x08Position\x12\x10\n\x08latitude\x18\x01 \x01(\x01\x12\x11\n\tlongitude\x18\x02 \x01(\x01\x12\x11\n\ttimestamp\x18\x03 \x01(\t\"\xc0\x01\n\x04Taxi\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x30\n\x10\x63urrent_position\x18\x03 \x01(\x0b\x32\x16.taxi_service.Position\x12\x30\n\x10initial_position\x18\x04 \x01(\x0b\x32\x16.taxi_service.Position\x12\x16\n\x0etotal_services\x18\x05 \x01(\x05\x12\x1b\n\x13successful_services\x18\x06 \x01(\x05\"\xdf\x01\n\x07Service\x12\x12\n\nservice_id\x18\x01 \x01(\t\x12\x0f\n\x07taxi_id\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12/\n\x0f\x63lient_position\x18\x04 \x01(\x0b\x32\x16.taxi_service.Position\x12\x35\n\x15taxi_initial_position\x18\x05 \x01(\x0b\x32\x16.taxi_service.Position\x12\x19\n\x11request_timestamp\x18\x06 \x01(\t\x12\x1c\n\x14\x63ompletion_timestamp\x18\x07 \x01(\t\"\'\n\x12HealthCheckRequest\x12\x11\n\tcomponent\x18\x01 \x01(\t\"I\n\x13HealthCheckResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x11\n\ttimestamp\x18\x03 \x01(\t\"&\n\x15ReplicateStateRequest\x12\r\n\x05state\x18\x01 \x01(\t\")\n\x16ReplicateStateResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\"\x19\n\x17PromoteToPrimaryRequest\"+\n\x18PromoteToPrimaryResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\"h\n\x13RegisterTaxiRequest\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12\x30\n\x10initial_position\x18\x02 \x01(\x0b\x32\x16.taxi_service.Position\x12\x0e\n\x06status\x18\x03 \x01(\t\"I\n\x14RegisterTaxiResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x0f\n\x07taxi_id\x18\x03 \x01(\t\"y\n\x19UpdateTaxiPositionRequest\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12(\n\x08position\x18\x02 \x01(\x0b\x32\x16.taxi_service.Position\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\t\"r\n\x1aUpdateTaxiPositionResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x32\n\x12\x63onfirmed_position\x18\x03 \x01(\x0b\x32\x16.taxi_service.Position\"m\n\x14\x43reateServiceRequest\x12\x11\n\tclient_id\x18\x01 \x01(\t\x12/\n\x0f\x63lient_position\x18\x02 \x01(\x0b\x32\x16.taxi_service.Position\x12\x11\n\ttimestamp\x18\x03 \x01(\t\"\x96\x01\n\x15\x43reateServiceResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\nservice_id\x18\x02 \x01(\t\x12\x18\n\x10\x61ssigned_taxi_id\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\x12-\n\rtaxi_position\x18\x05 \x01(\x0b\x32\x16.taxi_service.Position\"*\n\x14GetStatisticsRequest\x12\x12\n\ntime_range\x18\x01 \x01(\t\"\xbc\x01\n\tTaxiStats\x12\x0f\n\x07taxi_id\x18\x01 \x01(\t\x12\x16\n\x0etotal_services\x18\x02 \x01(\x05\x12\x1b\n\x13successful_services\x18\x03 \x01(\x05\x12\x34\n\x14historical_positions\x18\x04 \x03(\x0b\x32\x16.taxi_service.Position\x12\x33\n\x13last_known_position\x18\x05 \x01(\x0b\x32\x16.taxi_service.Position\"\x99\x02\n\x15GetStatisticsResponse\x12\x16\n\x0etotal_services\x18\x01 \x01(\x05\x12\x1a\n\x12\x63ompleted_services\x18\x02 \x01(\x05\x12\x17\n\x0f\x64\x65nied_services\x18\x03 \x01(\x05\x12P\n\x0ftaxi_statistics\x18\x04 \x03(\x0b\x32\x37.taxi_service.GetStatisticsResponse.TaxiStatisticsEntry\x12\x11\n\ttimestamp\x18\x05 \x01(\t\x1aN\n\x13TaxiStatisticsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12&\n\x05value\x18\x02 \x01(\x0b\x32\x17.taxi_service.TaxiStats:\x02\x38\x01\"^\n\x18GetAvailableTaxisRequest\x12\x32\n\x12reference_position\x18\x01 \x01(\x0b\x32\x16.taxi_service.Position\x12\x0e\n\x06radius\x18\x02 \x01(\x01\x32\xf0\x05\n\x13TaxiDatabaseService\x12R\n\x0bHealthCheck\x12 .taxi_service.HealthCheckRequest\x1a!.taxi_service.HealthCheckResponse\x12U\n\x0cRegisterTaxi\x12!.taxi_service.RegisterTaxiRequest\x1a\".taxi_service.RegisterTaxiResponse\x12g\n\x12UpdateTaxiPosition\x12\'.taxi_service.UpdateTaxiPositionRequest\x1a(.taxi_service.UpdateTaxiPositionResponse\x12X\n\rCreateService\x12\".taxi_service.CreateServiceRequest\x1a#.taxi_service.CreateServiceResponse\x12X\n\rGetStatistics\x12\".taxi_service.GetStatisticsRequest\x1a#.taxi_service.GetStatisticsResponse\x12Q\n\x11GetAvailableTaxis\x12&.taxi_service.GetAvailableTaxisRequest\x1a\x12.taxi_service.Taxi0\x01\x12[\n\x0eReplicateState\x12#.taxi_service.ReplicateStateRequest\x1a$.taxi_service.ReplicateStateResponse\x12\x61\n\x10PromoteToPrimary\x12%.taxi_service.PromoteToPrimaryRequest\x1a&.taxi_service.PromoteToPrimaryResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -43,28 +43,36 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEALTHCHECKREQUEST']._serialized_end=564
   _globals['_HEALTHCHECKRESPONSE']._serialized_start=566
   _globals['_HEALTHCHECKRESPONSE']._serialized_end=639
-  _globals['_REGISTERTAXIREQUEST']._serialized_start=641
-  _globals['_REGISTERTAXIREQUEST']._serialized_end=745
-  _globals['_REGISTERTAXIRESPONSE']._serialized_start=747
-  _globals['_REGISTERTAXIRESPONSE']._serialized_end=820
-  _globals['_UPDATETAXIPOSITIONREQUEST']._serialized_start=822
-  _globals['_UPDATETAXIPOSITIONREQUEST']._serialized_end=943
-  _globals['_UPDATETAXIPOSITIONRESPONSE']._serialized_start=945
-  _globals['_UPDATETAXIPOSITIONRESPONSE']._serialized_end=1059
-  _globals['_CREATESERVICEREQUEST']._serialized_start=1061
-  _globals['_CREATESERVICEREQUEST']._serialized_end=1170
-  _globals['_CREATESERVICERESPONSE']._serialized_start=1173
-  _globals['_CREATESERVICERESPONSE']._serialized_end=1323
-  _globals['_GETSTATISTICSREQUEST']._serialized_start=1325
-  _globals['_GETSTATISTICSREQUEST']._serialized_end=1367
-  _globals['_TAXISTATS']._serialized_start=1370
-  _globals['_TAXISTATS']._serialized_end=1558
-  _globals['_GETSTATISTICSRESPONSE']._serialized_start=1561
-  _globals['_GETSTATISTICSRESPONSE']._serialized_end=1842
-  _globals['_GETSTATISTICSRESPONSE_TAXISTATISTICSENTRY']._serialized_start=1764
-  _globals['_GETSTATISTICSRESPONSE_TAXISTATISTICSENTRY']._serialized_end=1842
-  _globals['_GETAVAILABLETAXISREQUEST']._serialized_start=1844
-  _globals['_GETAVAILABLETAXISREQUEST']._serialized_end=1938
-  _globals['_TAXIDATABASESERVICE']._serialized_start=1941
-  _globals['_TAXIDATABASESERVICE']._serialized_end=2501
+  _globals['_REPLICATESTATEREQUEST']._serialized_start=641
+  _globals['_REPLICATESTATEREQUEST']._serialized_end=679
+  _globals['_REPLICATESTATERESPONSE']._serialized_start=681
+  _globals['_REPLICATESTATERESPONSE']._serialized_end=722
+  _globals['_PROMOTETOPRIMARYREQUEST']._serialized_start=724
+  _globals['_PROMOTETOPRIMARYREQUEST']._serialized_end=749
+  _globals['_PROMOTETOPRIMARYRESPONSE']._serialized_start=751
+  _globals['_PROMOTETOPRIMARYRESPONSE']._serialized_end=794
+  _globals['_REGISTERTAXIREQUEST']._serialized_start=796
+  _globals['_REGISTERTAXIREQUEST']._serialized_end=900
+  _globals['_REGISTERTAXIRESPONSE']._serialized_start=902
+  _globals['_REGISTERTAXIRESPONSE']._serialized_end=975
+  _globals['_UPDATETAXIPOSITIONREQUEST']._serialized_start=977
+  _globals['_UPDATETAXIPOSITIONREQUEST']._serialized_end=1098
+  _globals['_UPDATETAXIPOSITIONRESPONSE']._serialized_start=1100
+  _globals['_UPDATETAXIPOSITIONRESPONSE']._serialized_end=1214
+  _globals['_CREATESERVICEREQUEST']._serialized_start=1216
+  _globals['_CREATESERVICEREQUEST']._serialized_end=1325
+  _globals['_CREATESERVICERESPONSE']._serialized_start=1328
+  _globals['_CREATESERVICERESPONSE']._serialized_end=1478
+  _globals['_GETSTATISTICSREQUEST']._serialized_start=1480
+  _globals['_GETSTATISTICSREQUEST']._serialized_end=1522
+  _globals['_TAXISTATS']._serialized_start=1525
+  _globals['_TAXISTATS']._serialized_end=1713
+  _globals['_GETSTATISTICSRESPONSE']._serialized_start=1716
+  _globals['_GETSTATISTICSRESPONSE']._serialized_end=1997
+  _globals['_GETSTATISTICSRESPONSE_TAXISTATISTICSENTRY']._serialized_start=1919
+  _globals['_GETSTATISTICSRESPONSE_TAXISTATISTICSENTRY']._serialized_end=1997
+  _globals['_GETAVAILABLETAXISREQUEST']._serialized_start=1999
+  _globals['_GETAVAILABLETAXISREQUEST']._serialized_end=2093
+  _globals['_TAXIDATABASESERVICE']._serialized_start=2096
+  _globals['_TAXIDATABASESERVICE']._serialized_end=2848
 # @@protoc_insertion_point(module_scope)
