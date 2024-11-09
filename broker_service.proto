@@ -4,6 +4,8 @@ package broker;
 
 service BrokerService {
     rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+    rpc PromoteToPrimary(PromoteToPrimaryRequest) returns (PromoteToPrimaryResponse);
+    rpc ReplicateState(ReplicateStateRequest) returns (ReplicateStateResponse);
 }
 
 message HealthCheckRequest {}
@@ -12,4 +14,18 @@ message HealthCheckResponse {
     bool status = 1;
     string message = 2;
     string timestamp = 3;
+}
+
+message PromoteToPrimaryRequest {}
+
+message PromoteToPrimaryResponse {
+    bool success = 1;
+}
+
+message ReplicateStateRequest {
+    string state = 1;
+}
+
+message ReplicateStateResponse {
+    bool success = 1;
 }

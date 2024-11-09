@@ -39,12 +39,34 @@ class BrokerServiceStub(object):
                 request_serializer=broker__service__pb2.HealthCheckRequest.SerializeToString,
                 response_deserializer=broker__service__pb2.HealthCheckResponse.FromString,
                 _registered_method=True)
+        self.PromoteToPrimary = channel.unary_unary(
+                '/broker.BrokerService/PromoteToPrimary',
+                request_serializer=broker__service__pb2.PromoteToPrimaryRequest.SerializeToString,
+                response_deserializer=broker__service__pb2.PromoteToPrimaryResponse.FromString,
+                _registered_method=True)
+        self.ReplicateState = channel.unary_unary(
+                '/broker.BrokerService/ReplicateState',
+                request_serializer=broker__service__pb2.ReplicateStateRequest.SerializeToString,
+                response_deserializer=broker__service__pb2.ReplicateStateResponse.FromString,
+                _registered_method=True)
 
 
 class BrokerServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def HealthCheck(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PromoteToPrimary(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReplicateState(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -57,6 +79,16 @@ def add_BrokerServiceServicer_to_server(servicer, server):
                     servicer.HealthCheck,
                     request_deserializer=broker__service__pb2.HealthCheckRequest.FromString,
                     response_serializer=broker__service__pb2.HealthCheckResponse.SerializeToString,
+            ),
+            'PromoteToPrimary': grpc.unary_unary_rpc_method_handler(
+                    servicer.PromoteToPrimary,
+                    request_deserializer=broker__service__pb2.PromoteToPrimaryRequest.FromString,
+                    response_serializer=broker__service__pb2.PromoteToPrimaryResponse.SerializeToString,
+            ),
+            'ReplicateState': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReplicateState,
+                    request_deserializer=broker__service__pb2.ReplicateStateRequest.FromString,
+                    response_serializer=broker__service__pb2.ReplicateStateResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -86,6 +118,60 @@ class BrokerService(object):
             '/broker.BrokerService/HealthCheck',
             broker__service__pb2.HealthCheckRequest.SerializeToString,
             broker__service__pb2.HealthCheckResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PromoteToPrimary(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/broker.BrokerService/PromoteToPrimary',
+            broker__service__pb2.PromoteToPrimaryRequest.SerializeToString,
+            broker__service__pb2.PromoteToPrimaryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReplicateState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/broker.BrokerService/ReplicateState',
+            broker__service__pb2.ReplicateStateRequest.SerializeToString,
+            broker__service__pb2.ReplicateStateResponse.FromString,
             options,
             channel_credentials,
             insecure,

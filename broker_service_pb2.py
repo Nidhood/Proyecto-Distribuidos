@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14\x62roker_service.proto\x12\x06\x62roker\"\x14\n\x12HealthCheckRequest\"I\n\x13HealthCheckResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x11\n\ttimestamp\x18\x03 \x01(\t2W\n\rBrokerService\x12\x46\n\x0bHealthCheck\x12\x1a.broker.HealthCheckRequest\x1a\x1b.broker.HealthCheckResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14\x62roker_service.proto\x12\x06\x62roker\"\x14\n\x12HealthCheckRequest\"I\n\x13HealthCheckResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x11\n\ttimestamp\x18\x03 \x01(\t\"\x19\n\x17PromoteToPrimaryRequest\"+\n\x18PromoteToPrimaryResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\"&\n\x15ReplicateStateRequest\x12\r\n\x05state\x18\x01 \x01(\t\")\n\x16ReplicateStateResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x32\xff\x01\n\rBrokerService\x12\x46\n\x0bHealthCheck\x12\x1a.broker.HealthCheckRequest\x1a\x1b.broker.HealthCheckResponse\x12U\n\x10PromoteToPrimary\x12\x1f.broker.PromoteToPrimaryRequest\x1a .broker.PromoteToPrimaryResponse\x12O\n\x0eReplicateState\x12\x1d.broker.ReplicateStateRequest\x1a\x1e.broker.ReplicateStateResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,6 +35,14 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEALTHCHECKREQUEST']._serialized_end=52
   _globals['_HEALTHCHECKRESPONSE']._serialized_start=54
   _globals['_HEALTHCHECKRESPONSE']._serialized_end=127
-  _globals['_BROKERSERVICE']._serialized_start=129
-  _globals['_BROKERSERVICE']._serialized_end=216
+  _globals['_PROMOTETOPRIMARYREQUEST']._serialized_start=129
+  _globals['_PROMOTETOPRIMARYREQUEST']._serialized_end=154
+  _globals['_PROMOTETOPRIMARYRESPONSE']._serialized_start=156
+  _globals['_PROMOTETOPRIMARYRESPONSE']._serialized_end=199
+  _globals['_REPLICATESTATEREQUEST']._serialized_start=201
+  _globals['_REPLICATESTATEREQUEST']._serialized_end=239
+  _globals['_REPLICATESTATERESPONSE']._serialized_start=241
+  _globals['_REPLICATESTATERESPONSE']._serialized_end=282
+  _globals['_BROKERSERVICE']._serialized_start=285
+  _globals['_BROKERSERVICE']._serialized_end=540
 # @@protoc_insertion_point(module_scope)

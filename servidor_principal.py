@@ -16,7 +16,7 @@ import taxi_service_pb2_grpc
 
 
 class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
-    def __init__(self, db_service_address='localhost:50052', secondary_address=None):
+    def __init__(self, db_service_address='localhost:50052', secondary_address='localhost:50054',is_primary=False):
         # Configuración gRPC para comunicación con gestor_db
         self.message_thread = None
         self.db_channel = grpc.insecure_channel(db_service_address)
@@ -50,20 +50,6 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         self.start_message_processing()
 
 
-    def replicate_state(self):
-        state = {
-            'taxis': self.taxis,
-            'servicios_activos': self.servicios_activos,
-            'registered_taxis': list(self.registered_taxis)
-        }
-        if self.secondary_address:
-            try:
-                with grpc.insecure_channel(self.secondary_address) as channel:
-                    stub = taxi_service_pb2_grpc.TaxiDatabaseServiceStub(channel)
-                    request = taxi_service_pb2.ReplicateStateRequest(state=json.dumps(state))
-                    stub.ReplicateState(request)
-            except Exception as e:
-                logging.error(f"Error replicando estado a {self.secondary_address}: {e}")
 
 
     def calcular_distancia(self, pos1, pos2):
@@ -332,6 +318,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 timestamp=datetime.now().isoformat()
             )
 
+    # Implementar el método para recibir la replicación del estado
     def ReplicateState(self, request, context):
         state = json.loads(request.state)
         self.taxis = state['taxis']
@@ -340,6 +327,22 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         logging.info("Estado replicado recibido")
         return taxi_service_pb2.ReplicateStateResponse(success=True)
 
+    # Implementar el método para replicar el estado
+    def replicate_state(self):
+        time.sleep(4)  # Esperar un segundo antes de replicar el estado
+        state = {
+            'taxis': self.taxis,
+            'servicios_activos': self.servicios_activos,
+            'registered_taxis': list(self.registered_taxis)
+        }
+        if self.secondary_address:
+            try:
+                with grpc.insecure_channel(self.secondary_address) as channel:
+                    stub = taxi_service_pb2_grpc.TaxiDatabaseServiceStub(channel)
+                    request = taxi_service_pb2.ReplicateStateRequest(state=json.dumps(state))
+                    stub.ReplicateState(request)
+            except Exception as e:
+                logging.error(f"Error replicando estado a {self.secondary_address}: {e}")
 
     def run(self, port=50051):
         """Ejecuta el servidor en un bucle principal"""
@@ -352,6 +355,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             while True:
                 time.sleep(1)  # Mantiene el ciclo vivo
                 self.cleanup_completed_services()  # Limpia servicios completados
+                self.replicate_state()
         except KeyboardInterrupt:
             logging.info("Servidor detenido por el usuario.")
         finally:

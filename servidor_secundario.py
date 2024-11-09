@@ -14,7 +14,7 @@ import taxi_service_pb2
 import taxi_service_pb2_grpc
 
 class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
-    def __init__(self, db_service_address='localhost:50052', is_primary=False, secondary_address=None):
+    def __init__(self, db_service_address='localhost:50052', is_primary=False, secondary_address='localhost:50051'):
         self.message_thread = None
         self.db_channel = grpc.insecure_channel(db_service_address)
         self.db_stub = taxi_service_pb2_grpc.TaxiDatabaseServiceStub(self.db_channel)
@@ -262,6 +262,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             logging.info(f"Servicio {service_id} completado y taxi liberado")
 
     def replicate_state(self):
+        time.sleep(4)
         state = {
             'taxis': self.taxis,
             'servicios_activos': self.servicios_activos,

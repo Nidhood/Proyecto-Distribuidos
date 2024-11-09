@@ -10,11 +10,13 @@ import broker_service_pb2
 import broker_service_pb2_grpc
 
 class ServerHealthCheck:
-    def __init__(self, server_address='localhost:50051',backup_address='localhost:50054', broker_address='localhost:50053', check_interval=10):
+    def __init__(self, server_address='localhost:50051',backup_address='localhost:50054', broker_address='localhost:50053',broker_backup_address='localhost:50055', check_interval=10):
         self.monitor_thread = None
         self.server_address = server_address
         self.broker_address = broker_address
         self.backup_address = backup_address
+        self.broker_backup_address = broker_backup_address
+
         self.check_interval = check_interval
         self.stop_event = Event()
         self.consecutive_failures = 0
@@ -93,6 +95,8 @@ class ServerHealthCheck:
 
             else:
                 self.handle_health_status(False, f"Broker health check failed: {broker_message}")
+                self.promote_broker_backup_to_primary()
+                self.broker_address = self.broker_backup_address
 
             self.stop_event.wait(timeout=self.check_interval)
 
@@ -109,6 +113,21 @@ class ServerHealthCheck:
                     self.logger.error("Fallo al promover el servidor de respaldo a primario")
         except Exception as e:
             self.logger.error(f"Error promoviendo el servidor de respaldo a primario: {e}")
+
+    def promote_broker_backup_to_primary(self):
+        self.logger.info("Promoviendo broker de respaldo a primario")
+        try:
+            with grpc.insecure_channel(self.broker_backup_address) as channel:
+                stub = broker_service_pb2_grpc.BrokerServiceStub(channel)
+                request = broker_service_pb2.PromoteToPrimaryRequest()
+                response = stub.PromoteToPrimary(request)
+                if response.success:
+                    self.logger.info("Broker de respaldo promovido a primario exitosamente")
+                else:
+                    self.logger.error("Fallo al promover el broker de respaldo a primario")
+        except Exception as e:
+            self.logger.error(f"Error promoviendo el broker de respaldo a primario: {e}")
+
 
     def start(self):
         """Inicia el monitoreo de salud en un thread separado"""
