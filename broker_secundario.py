@@ -13,36 +13,27 @@ import broker_service_pb2_grpc
 
 
 class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
-    def __init__(self, frontend_port=5557, backend_port=5558, grpc_port=50053, secondary_address=50055):
+    def __init__(self, is_primary=False, frontend_port=5557, backend_port=5558, grpc_port=50055, secondary_address=50053):
+        self.is_primary = is_primary
+        self.frontend_port = frontend_port
+        self.backend_port = backend_port
+        self.grpc_port = grpc_port
+        self.secondary_address = secondary_address
         self.monitor_thread = None
         self.proxy_thread = None
         self.context = zmq.Context()
-        self.secondary_address = secondary_address
         self.active = True
         self.stop_event = Event()
         self.active_subscribers = set()  # Agregado el conjunto de suscriptores activos
-        self.grpc_port = grpc_port
+        self.state = {}
 
-        # Socket para recibir mensajes de publicadores
-        self.frontend = self.context.socket(zmq.XSUB)
-        self.frontend.bind(f"tcp://*:{frontend_port}")
+        logging.info(f'Broker {"primario" if self.is_primary else "secundario"} iniciado ')
 
-        # Socket para distribuir mensajes a suscriptores
-        self.backend = self.context.socket(zmq.XPUB)
-        self.backend.bind(f"tcp://*:{backend_port}")
-
-        # Configuración importante para el backend
-        self.backend.setsockopt(zmq.XPUB_VERBOSE, 1)
-        self.backend.setsockopt(zmq.LINGER, 0)
-        self.frontend.setsockopt(zmq.LINGER, 0)
-
-        # Aumentar el high water mark para evitar pérdida de mensajes
-        self.frontend.setsockopt(zmq.SNDHWM, 1000000)
-        self.frontend.setsockopt(zmq.RCVHWM, 1000000)
-        self.backend.setsockopt(zmq.SNDHWM, 1000000)
-        self.backend.setsockopt(zmq.RCVHWM, 1000000)
-
-        logging.info(f"Broker iniciado - Frontend: {frontend_port}, Backend: {backend_port}")
+    def PromoteToPrimary(self, request, context):
+        self.is_primary = True
+        logging.info("Broker promovido a primario")
+        self.start_primary_functions()
+        return broker_service_pb2.PromoteToPrimaryResponse(success=True)
 
     def HealthCheck(self, request, context):
         try:
@@ -89,9 +80,28 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
             if not self.stop_event.is_set():
                 logging.error(f"Error en proxy ZMQ: {e}")
 
-    def start(self):
-        """Inicia el broker y el monitoreo de suscripciones"""
+    def start_primary_functions(self):
+        """Inicia las funciones del broker primario"""
         try:
+            # Socket para recibir mensajes de publicadores
+            self.frontend = self.context.socket(zmq.XSUB)
+            self.frontend.bind(f"tcp://*:{self.frontend_port}")
+
+            # Socket para distribuir mensajes a suscriptores
+            self.backend = self.context.socket(zmq.XPUB)
+            self.backend.bind(f"tcp://*:{self.backend_port}")
+
+            # Configuración importante para el backend
+            self.backend.setsockopt(zmq.XPUB_VERBOSE, 1)
+            self.backend.setsockopt(zmq.LINGER, 0)
+            self.frontend.setsockopt(zmq.LINGER, 0)
+
+            # Aumentar el high water mark para evitar pérdida de mensajes
+            self.frontend.setsockopt(zmq.SNDHWM, 1000000)
+            self.frontend.setsockopt(zmq.RCVHWM, 1000000)
+            self.backend.setsockopt(zmq.SNDHWM, 1000000)
+            self.backend.setsockopt(zmq.RCVHWM, 1000000)
+
             # Iniciar thread de monitoreo
             self.monitor_thread = Thread(target=self._monitor_subscriptions)
             self.monitor_thread.daemon = True
@@ -102,16 +112,11 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
             self.proxy_thread.daemon = True
             self.proxy_thread.start()
 
-            # Iniciar servidor gRPC para Health Check
-            grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-            broker_service_pb2_grpc.add_BrokerServiceServicer_to_server(self, grpc_server)
-            grpc_server.add_insecure_port(f'[::]:{self.grpc_port}')
-            grpc_server.start()
-            logging.info(f'gRPC server started on port {self.grpc_port}')
-
             # Mantener el broker activo
             while not self.stop_event.is_set():
                 time.sleep(1)
+                if self.is_primary:
+                    self.replicate_state()
 
         except KeyboardInterrupt:
             logging.info("Broker detenido por el usuario")
@@ -132,27 +137,13 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
             self.proxy_thread.join(timeout=2)
 
         # Cerrar sockets
-        self.frontend.close()
-        self.backend.close()
+        if hasattr(self, 'frontend'):
+            self.frontend.close()
+        if hasattr(self, 'backend'):
+            self.backend.close()
         self.context.term()
         logging.info("Broker detenido")
 
-    def ReplicateState(self, request, context):
-        self.state = json.loads(request.state)
-        logging.info("Estado replicado recibido")
-        return broker_service_pb2.ReplicateStateResponse(success=True)
-
-    def replicate_state(self):
-        time.sleep(4)
-        state = json.dumps(self.state)
-        if self.secondary_address:
-            try:
-                with grpc.insecure_channel(self.secondary_address) as channel:
-                    stub = broker_service_pb2_grpc.BrokerServiceStub(channel)
-                    request = broker_service_pb2.ReplicateStateRequest(state=state)
-                    stub.ReplicateState(request)
-            except Exception as e:
-                logging.error(f"Error replicando estado a {self.secondary_address}: {e}")
 
 
 def main():
@@ -163,7 +154,17 @@ def main():
 
     broker = TaxiBroker()
     try:
-        broker.start()
+        # Iniciar servidor gRPC para Health Check
+        grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        broker_service_pb2_grpc.add_BrokerServiceServicer_to_server(broker, grpc_server)
+        grpc_server.add_insecure_port(f'[::]:{broker.grpc_port}')
+        grpc_server.start()
+        logging.info(f'gRPC server started on port {broker.grpc_port}')
+
+        # Mantener el servidor gRPC activo
+        while True:
+            time.sleep(1)
+
     except KeyboardInterrupt:
         broker.stop()
 

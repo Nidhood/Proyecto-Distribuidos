@@ -3,12 +3,11 @@ import logging
 import threading
 import time
 import uuid
-
 import zmq
-
+from datetime import datetime
 
 class TaxiNode:
-    def __init__(self, N, M, posicion_inicial, velocidad, num_servicios, puerto_pub=5559, puerto_sub=5556):
+    def __init__(self, N, M, posicion_inicial, velocidad, num_servicios, puerto_pub=5557, puerto_sub=5558):
         self.id_taxi = str(uuid.uuid4())
         self.N, self.M = N, M
         self.posicion_inicial = posicion_inicial
@@ -19,18 +18,27 @@ class TaxiNode:
         self.estado = 'disponible'
         self.activo = True
 
+        # Configurar logging personalizado
+        self.logger = logging.getLogger(f'Taxi-{self.id_taxi[:6]}')
+        self.logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('🚕 %(asctime)s - %(message)s')
+        ch = logging.StreamHandler()
+        ch.setFormatter(formatter)
+        self.logger.addHandler(ch)
+
         # Configuración ZMQ
         self.context = zmq.Context()
         self.publisher = self.context.socket(zmq.PUB)
-        self.subscriber = self.context.socket(zmq.SUB)
         self.publisher.connect(f"tcp://localhost:{puerto_pub}")
+
+        self.subscriber = self.context.socket(zmq.SUB)
         self.subscriber.connect(f"tcp://localhost:{puerto_sub}")
         self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "asignacion_taxi")
-        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "resultado_servicio")
+        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "confirmacion_taxi")
 
         # Registro inicial
         self.registrar_taxi()
-        logging.info(f"Taxi {self.id_taxi} iniciado en posición {self.posicion}")
+        self.logger.info(f"🚀 Iniciando en posición ({self.posicion['lat']}, {self.posicion['lng']})")
 
     def registrar_taxi(self):
         mensaje = {
@@ -41,21 +49,32 @@ class TaxiNode:
             'timestamp': time.time()
         }
         self.publisher.send_string(f"registro_taxi {json.dumps(mensaje)}")
+        self.logger.info("📝 Enviando solicitud de registro")
 
     def calcular_nueva_posicion(self):
-        nueva_posicion = {
-            'lat': min(max(0, self.posicion['lat'] + 1), self.N),
-            'lng': min(max(0, self.posicion['lng'] + 1), self.M)
-        }
-        return nueva_posicion
+        """Calcula la siguiente posición del taxi de manera cíclica en la cuadrícula"""
+        nueva_lat = self.posicion['lat']
+        nueva_lng = self.posicion['lng']
 
-    def mover_taxi(self):
-        while self.activo and self.servicios_realizados < self.num_servicios_max:
-            if self.estado == 'disponible':
-                nueva_posicion = self.calcular_nueva_posicion()
-                self.posicion = nueva_posicion
-                self.actualizar_posicion()
-                time.sleep(30 / self.velocidad)
+        # Si llegamos al límite, volvemos al inicio
+        if nueva_lat >= self.N and nueva_lng >= self.M:
+            nueva_lat = 0
+            nueva_lng = 0
+        else:
+            # Incrementar primero longitud
+            if nueva_lng < self.M - 1:
+                nueva_lng += 1
+            else:
+                nueva_lng = 0
+                if nueva_lat < self.N - 1:
+                    nueva_lat += 1
+                else:
+                    nueva_lat = 0
+
+        return {
+            'lat': nueva_lat,
+            'lng': nueva_lng
+        }
 
     def actualizar_posicion(self):
         mensaje = {
@@ -67,46 +86,72 @@ class TaxiNode:
         }
         self.publisher.send_string(f"posicion_taxi {json.dumps(mensaje)}")
 
+    def mover_taxi(self):
+        while self.activo and self.servicios_realizados < self.num_servicios_max:
+            if self.estado == 'disponible':
+                nueva_posicion = self.calcular_nueva_posicion()
+                pos_anterior = self.posicion.copy()
+                self.posicion = nueva_posicion
+                self.actualizar_posicion()
+                self.logger.info(f"🚖 Movimiento: ({pos_anterior['lat']}, {pos_anterior['lng']}) → ({nueva_posicion['lat']}, {nueva_posicion['lng']})")
+                time.sleep(30 / self.velocidad)  # Ajustar según velocidad
+
     def procesar_mensajes(self):
         while self.activo:
             try:
                 topic, mensaje = self.subscriber.recv_string().split(" ", 1)
                 datos = json.loads(mensaje)
 
-                if datos.get('id_taxi') == self.id_taxi and datos.get('tipo') == 'asignacion_servicio':
+                if topic == "confirmacion_taxi":
+                    if datos.get('id_taxi') == self.id_taxi:
+                        estado = datos.get('estado', 'unknown')
+                        if estado == 'success':
+                            self.logger.info("✅ Registro confirmado por el servidor")
+                        else:
+                            self.logger.error(f"❌ Error en registro: {datos.get('mensaje', 'Unknown error')}")
+
+                elif topic == "asignacion_taxi" and datos.get('id_taxi') == self.id_taxi:
                     self.estado = 'ocupado'
-                    logging.info(f"Taxi {self.id_taxi} asignado a servicio {datos['id_servicio']}")
+                    self.logger.info(f"🎯 Asignado a servicio {datos['id_servicio']}")
+                    self.logger.info(f"🚗 Recogiendo cliente en ({datos['posicion_cliente']['lat']}, {datos['posicion_cliente']['lng']})")
 
                     # Simular servicio (30 segundos)
                     time.sleep(30)
 
                     self.servicios_realizados += 1
                     if self.servicios_realizados >= self.num_servicios_max:
+                        self.logger.info("🏁 Completados todos los servicios asignados")
                         self.activo = False
-                        logging.info(f"Taxi {self.id_taxi} completó todos sus servicios")
                     else:
-                        # Volver a posición inicial
                         self.posicion = self.posicion_inicial.copy()
                         self.estado = 'disponible'
                         self.actualizar_posicion()
+                        self.logger.info(f"✅ Servicio completado ({self.servicios_realizados}/{self.num_servicios_max})")
+                        self.logger.info(f"🔄 Retornando a posición inicial ({self.posicion_inicial['lat']}, {self.posicion_inicial['lng']})")
 
             except Exception as e:
-                logging.error(f"Error al procesar mensaje: {e}")
+                self.logger.error(f"❌ Error procesando mensaje: {e}")
 
     def start(self):
+        self.logger.info(f"🎮 Velocidad: {self.velocidad} km/h, Servicios máximos: {self.num_servicios_max}")
         threading.Thread(target=self.mover_taxi).start()
         threading.Thread(target=self.procesar_mensajes).start()
 
+    def stop(self):
+        self.activo = False
+        self.subscriber.close()
+        self.publisher.close()
+        self.context.term()
+        self.logger.info("🛑 Taxi detenido")
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
-    N = int(input("Ingrese el tamaño N de la cuadrícula: "))
-    M = int(input("Ingrese el tamaño M de la cuadrícula: "))
-    pos_x = int(input("Ingrese la posición inicial X: "))
-    pos_y = int(input("Ingrese la posición inicial Y: "))
-    velocidad = int(input("Ingrese la velocidad en km/h: "))
-    num_servicios = int(input("Ingrese el número máximo de servicios: "))
+def main():
+    print("=== 🚕 Iniciando nuevo taxi 🚕 ===")
+    N = int(input("📏 Ingrese el tamaño N de la cuadrícula: "))
+    M = int(input("📏 Ingrese el tamaño M de la cuadrícula: "))
+    pos_x = int(input("📍 Ingrese la posición inicial X: "))
+    pos_y = int(input("📍 Ingrese la posición inicial Y: "))
+    velocidad = int(input("🚀 Ingrese la velocidad en km/h: "))
+    num_servicios = int(input("🎯 Ingrese el número máximo de servicios: "))
 
     taxi = TaxiNode(
         N=N,
@@ -115,4 +160,15 @@ if __name__ == "__main__":
         velocidad=velocidad,
         num_servicios=num_servicios
     )
-    taxi.start()
+    try:
+        taxi.start()
+        while taxi.activo:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        taxi.stop()
+        print("\n🛑 Programa terminado por el usuario")
+    finally:
+        taxi.stop()
+
+if __name__ == "__main__":
+    main()

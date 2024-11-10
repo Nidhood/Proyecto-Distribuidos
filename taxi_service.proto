@@ -2,6 +2,19 @@ syntax = "proto3";
 
 package taxi_service;
 
+// Servicios principales
+service TaxiDatabaseService {
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+    rpc RegisterTaxi(RegisterTaxiRequest) returns (RegisterTaxiResponse);
+    rpc UpdateTaxiPosition(UpdateTaxiPositionRequest) returns (UpdateTaxiPositionResponse);
+    rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
+    rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
+    rpc GetAvailableTaxis(GetAvailableTaxisRequest) returns (stream Taxi);
+  rpc ReplicateState(ReplicateStateRequest) returns (ReplicateStateResponse);
+    rpc PromoteToPrimary(PromoteToPrimaryRequest) returns (PromoteToPrimaryResponse);
+}
+
+// Mensajes base
 message Position {
     double latitude = 1;
     double longitude = 2;
@@ -11,9 +24,10 @@ message Position {
 message Taxi {
     string taxi_id = 1;
     string status = 2;
-    Position position = 3;
-    int32 total_services = 4;
-    int32 successful_services = 5;
+    Position current_position = 3;
+    Position initial_position = 4;
+    int32 total_services = 5;
+    int32 successful_services = 6;
 }
 
 message Service {
@@ -21,43 +35,67 @@ message Service {
     string taxi_id = 2;
     string status = 3;
     Position client_position = 4;
-    Position taxi_position = 5;
+    Position taxi_initial_position = 5;
     string request_timestamp = 6;
     string completion_timestamp = 7;
 }
 
-// Health Check Messages
-message HealthCheckRequest {}
+// Health Check
+message HealthCheckRequest {
+    string component = 1;
+}
+
 message HealthCheckResponse {
     bool status = 1;
     string message = 2;
+    string timestamp = 3;
+}
+message ReplicateStateRequest {
+    string state = 1;
 }
 
-// Database Service Messages
+message ReplicateStateResponse {
+    bool success = 1;
+}
+
+message PromoteToPrimaryRequest {}
+
+message PromoteToPrimaryResponse {
+    bool success = 1;
+}
+
+// Registro de taxi
 message RegisterTaxiRequest {
     string taxi_id = 1;
     Position initial_position = 2;
+    string status = 3;
 }
 
 message RegisterTaxiResponse {
     bool success = 1;
     string message = 2;
+    string taxi_id = 3;
 }
 
+// Actualización de posición
 message UpdateTaxiPositionRequest {
     string taxi_id = 1;
     Position position = 2;
     string status = 3;
+    string timestamp = 4;
 }
 
 message UpdateTaxiPositionResponse {
     bool success = 1;
     string message = 2;
+    Position confirmed_position = 3;
 }
 
+// Creación de servicio
 message CreateServiceRequest {
     string client_id = 1;
     Position client_position = 2;
+    string timestamp = 3;
 }
 
 message CreateServiceResponse {
@@ -65,30 +103,32 @@ message CreateServiceResponse {
     string service_id = 2;
     string assigned_taxi_id = 3;
     string message = 4;
+    Position taxi_position = 5;
 }
 
-message GetStatisticsRequest {}
+// Estadísticas
+message GetStatisticsRequest {
+    string time_range = 1;
+}
 
+message TaxiStats {
+    string taxi_id = 1;
+    int32 total_services = 2;
+    int32 successful_services = 3;
+    repeated Position historical_positions = 4;
+    Position last_known_position = 5;
+}
 
 message GetStatisticsResponse {
     int32 total_services = 1;
     int32 completed_services = 2;
     int32 denied_services = 3;
     map<string, TaxiStats> taxi_statistics = 4;
+    string timestamp = 5;
 }
 
-message TaxiStats {
-    int32 total_services = 1;
-    int32 successful_services = 2;
-    repeated Position historical_positions = 3;
+// Consulta de taxis disponibles
+message GetAvailableTaxisRequest {
+    Position reference_position = 1;
+    double radius = 2;
 }
-
-service TaxiDatabaseService {
-    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
-    rpc RegisterTaxi(RegisterTaxiRequest) returns (RegisterTaxiResponse);
-    rpc UpdateTaxiPosition(UpdateTaxiPositionRequest) returns (UpdateTaxiPositionResponse);
-    rpc GetAvailableTaxis(GetStatisticsRequest) returns (stream Taxi);
-    rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
-    rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
-}
-
