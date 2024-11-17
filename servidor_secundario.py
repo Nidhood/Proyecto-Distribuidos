@@ -13,15 +13,19 @@ import zmq
 import taxi_service_pb2
 import taxi_service_pb2_grpc
 
+
 class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
     def __init__(self, db_service_address='localhost:50052', is_primary=False, secondary_address='localhost:50051'):
         # Configuración de logging
-        self.logger = logging.getLogger('TaxiServer-Secondary')
-        self.logger.setLevel(logging.INFO)
-        formatter = logging.Formatter('🚦 %(asctime)s - %(message)s')
-        ch = logging.StreamHandler()
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
+        self.logger = logging.getLogger(f'TaxiServer-{"Primary" if is_primary else "Secondary"}')
+        if not self.logger.handlers:  # Evitar handlers duplicados
+            self.logger.setLevel(logging.INFO)
+            formatter = logging.Formatter('🚦 %(asctime)s - %(message)s')
+            ch = logging.StreamHandler()
+            ch.setFormatter(formatter)
+            self.logger.addHandler(ch)
+        self.is_paused = not is_primary
+        self.active = True
 
         self.message_thread = None
         self.db_channel = grpc.insecure_channel(db_service_address)
@@ -59,7 +63,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         current_time = time.time()
         taxis_disponibles = [
             (id_taxi, info) for id_taxi, info in self.taxis.items()
-            if info['estado'] == 'disponible' and
+            if info['estado'] == 'AVAILABLE' and
                current_time - info.get('ultimo_update', 0) < 60
         ]
 
@@ -88,24 +92,28 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         time.sleep(1)
 
     def process_zmq_messages(self):
+        """Procesa los mensajes ZMQ recibidos"""
         poller = zmq.Poller()
         poller.register(self.subscriber, zmq.POLLIN)
 
         while self.active:
             try:
-                socks = dict(poller.poll(timeout=1000))
-                if self.subscriber in socks:
-                    message = self.subscriber.recv_string()
-                    if " " in message:
-                        topic, message_data = message.split(" ", 1)
-                        data = json.loads(message_data)
+                if not self.is_paused:  # Solo procesar mensajes si no está pausado
+                    socks = dict(poller.poll(timeout=1000))
+                    if self.subscriber in socks:
+                        message = self.subscriber.recv_string()
+                        if " " in message:
+                            topic, message_data = message.split(" ", 1)
+                            data = json.loads(message_data)
 
-                        if topic == "solicitud_servicio":
-                            self.handle_service_request(data)
-                        elif topic == "registro_taxi":
-                            self.handle_taxi_registration(data)
-                        elif topic == "posicion_taxi":
-                            self.handle_taxi_position_update(data)
+                            if topic == "solicitud_servicio":
+                                self.handle_service_request(data)
+                            elif topic == "registro_taxi":
+                                self.handle_taxi_registration(data)
+                            elif topic == "posicion_taxi":
+                                self.handle_taxi_position_update(data)
+                else:
+                    time.sleep(1)  # Esperar mientras está pausado
             except Exception as e:
                 self.logger.error(f"Error al procesar mensaje ZMQ: {e}")
                 if not self.active:
@@ -132,12 +140,13 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     latitude=data['posicion']['lat'],
                     longitude=data['posicion']['lng'],
                     timestamp=str(datetime.fromtimestamp(data['timestamp']))
-                )
+                ),
+                status='REQUESTED'
             )
             response = self.db_stub.CreateService(request)
 
             if response.success:
-                self.taxis[taxi_id]['estado'] = 'ocupado'
+                self.taxis[taxi_id]['estado'] = 'BUSY'
                 self.servicios_activos[service_id] = {
                     'taxi_id': taxi_id,
                     'client_id': data['id_cliente'],
@@ -295,9 +304,28 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             self.logger.error(f"❌ Error al recibir replicación: {e}")
             return taxi_service_pb2.ReplicateStateResponse(success=False)
 
+    def pause_server(self):
+        """Pausa el procesamiento de mensajes del servidor"""
+        self.is_paused = True
+        self.logger.info("Servidor pausado")
+
+    def resume_server(self):
+        """Reanuda el procesamiento de mensajes del servidor"""
+        self.is_paused = False
+        self.logger.info("Servidor reanudado")
+
     def PromoteToPrimary(self, request, context):
+        """Promueve el servidor secundario a primario"""
         self.is_primary = True
+        self.resume_server()  # Reanudar el servidor al ser promovido
         self.logger.info("🔄 Servidor promovido a primario")
+        return taxi_service_pb2.PromoteToPrimaryResponse(success=True)
+
+    def DemoteToSecondary(self, request, context):
+        """Degrada el servidor a secundario"""
+        self.is_primary = False
+        self.pause_server()  # Pausar el servidor al ser degradado
+        self.logger.info("🔄 Servidor degradado a secundario")
         return taxi_service_pb2.PromoteToPrimaryResponse(success=True)
 
     def run(self, port=50054):

@@ -20,43 +20,29 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
         self.secondary_address = secondary_address
         self.active = True
         self.stop_event = Event()
-        self.active_subscribers = set()  # Agregado el conjunto de suscriptores activos
+        self.active_subscribers = set()
         self.grpc_port = grpc_port
 
-        # Socket para recibir mensajes de publicadores
+        # Socket para recibir mensajes de publicadores (XSUB)
         self.frontend = self.context.socket(zmq.XSUB)
         self.frontend.bind(f"tcp://*:{frontend_port}")
 
-        # Socket para distribuir mensajes a suscriptores
+        # Socket para distribuir mensajes a suscriptores (XPUB)
         self.backend = self.context.socket(zmq.XPUB)
         self.backend.bind(f"tcp://*:{backend_port}")
 
-        # Configuración importante para el backend
-        self.backend.setsockopt(zmq.XPUB_VERBOSE, 1)
-        self.backend.setsockopt(zmq.LINGER, 0)
-        self.frontend.setsockopt(zmq.LINGER, 0)
+        # Configuración crucial para XPUB
+        self.backend.setsockopt(zmq.XPUB_VERBOSE, 1)  # Habilitar mensajes verbosos
+        self.backend.setsockopt(zmq.RCVHWM, 0)  # Sin límite de mensajes
+        self.frontend.setsockopt(zmq.RCVHWM, 0)  # Sin límite de mensajes
 
-        # Aumentar el high water mark para evitar pérdida de mensajes
-        self.frontend.setsockopt(zmq.SNDHWM, 1000000)
-        self.frontend.setsockopt(zmq.RCVHWM, 1000000)
-        self.backend.setsockopt(zmq.SNDHWM, 1000000)
-        self.backend.setsockopt(zmq.RCVHWM, 1000000)
+        # Configurar keepalive
+        self.backend.setsockopt(zmq.TCP_KEEPALIVE, 1)
+        self.backend.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 300)
+        self.frontend.setsockopt(zmq.TCP_KEEPALIVE, 1)
+        self.frontend.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 300)
 
-        logging.info(f"Broker iniciado - Frontend: {frontend_port}, Backend: {backend_port}")
-
-    def HealthCheck(self, request, context):
-        try:
-            return broker_service_pb2.HealthCheckResponse(
-                status=True,
-                message="Broker is healthy",
-                timestamp=datetime.now().isoformat()
-            )
-        except Exception as e:
-            return broker_service_pb2.HealthCheckResponse(
-                status=False,
-                message=f"Health check failed: {str(e)}",
-                timestamp=datetime.now().isoformat()
-            )
+        logging.info(f"🔄 Broker iniciado - Frontend: {frontend_port}, Backend: {backend_port}")
 
     def _monitor_subscriptions(self):
         """Monitorea las suscripciones y desuscripciones"""
@@ -65,94 +51,95 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
 
         while not self.stop_event.is_set():
             try:
-                socks = dict(poller.poll(timeout=1000))
+                socks = dict(poller.poll(timeout=100))
                 if self.backend in socks:
                     event = self.backend.recv()
-                    if event[0] == 1:  # Suscripción
+                    if event:  # Verificar que el evento no está vacío
+                        # El primer byte indica suscripción (1) o desuscripción (0)
+                        is_subscribe = event[0] == 1
                         topic = event[1:].decode('utf-8')
-                        self.active_subscribers.add(topic)
-                        logging.info(f"Nueva suscripción: {topic}")
-                    elif event[0] == 0:  # Desuscripción
-                        topic = event[1:].decode('utf-8')
-                        self.active_subscribers.discard(topic)
-                        logging.info(f"Desuscripción: {topic}")
+
+                        if is_subscribe:
+                            self.active_subscribers.add(topic)
+                            logging.info(f"📥 Nueva suscripción: {topic}")
+                            # Reenviar explícitamente el mensaje de suscripción
+                            self.frontend.send(event)
+                        else:
+                            self.active_subscribers.discard(topic)
+                            logging.info(f"📤 Desuscripción: {topic}")
+
             except Exception as e:
-                logging.error(f"Error en monitoreo de suscripciones: {e}")
+                logging.error(f"❌ Error en monitoreo de suscripciones: {e}")
                 if not self.stop_event.is_set():
+                    time.sleep(1)  # Esperar antes de reintentar
                     continue
 
     def _forward_messages(self):
         """Reenvía mensajes del frontend al backend"""
-        try:
-            zmq.proxy(self.frontend, self.backend)
-        except zmq.error.ZMQError as e:
-            if not self.stop_event.is_set():
-                logging.error(f"Error en proxy ZMQ: {e}")
+        poller = zmq.Poller()
+        poller.register(self.frontend, zmq.POLLIN)
+
+        while not self.stop_event.is_set():
+            try:
+                socks = dict(poller.poll(timeout=100))
+                if self.frontend in socks:
+                    message = self.frontend.recv()
+                    if message:  # Verificar mensaje no vacío
+                        topic = message.split(b' ')[0]  # Extraer topic del mensaje
+                        logging.debug(f"↔️ Reenviando mensaje para topic: {topic}")
+                        self.backend.send(message)
+
+            except Exception as e:
+                logging.error(f"❌ Error en reenvío de mensajes: {e}")
+                if not self.stop_event.is_set():
+                    time.sleep(1)
+                    continue
 
     def start(self):
         """Inicia el broker y el monitoreo de suscripciones"""
         try:
-            # Iniciar thread de monitoreo
+            # Iniciar threads
             self.monitor_thread = Thread(target=self._monitor_subscriptions)
             self.monitor_thread.daemon = True
             self.monitor_thread.start()
+            logging.info("📡 Monitor de suscripciones iniciado")
 
-            # Iniciar thread de reenvío de mensajes
             self.proxy_thread = Thread(target=self._forward_messages)
             self.proxy_thread.daemon = True
             self.proxy_thread.start()
+            logging.info("🔄 Proxy de mensajes iniciado")
 
-            # Iniciar servidor gRPC para Health Check
+            # Servidor gRPC
             grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
             broker_service_pb2_grpc.add_BrokerServiceServicer_to_server(self, grpc_server)
             grpc_server.add_insecure_port(f'[::]:{self.grpc_port}')
             grpc_server.start()
-            logging.info(f'gRPC server started on port {self.grpc_port}')
+            logging.info(f'🚀 Servidor gRPC iniciado en puerto {self.grpc_port}')
 
-            # Mantener el broker activo
             while not self.stop_event.is_set():
                 time.sleep(1)
 
         except KeyboardInterrupt:
-            logging.info("Broker detenido por el usuario")
+            logging.info("⛔ Broker detenido por el usuario")
             self.stop()
         except Exception as e:
-            logging.error(f"Error al iniciar el broker: {e}")
+            logging.error(f"❌ Error en broker: {e}")
             self.stop()
 
     def stop(self):
         """Detiene el broker y libera recursos"""
-        logging.info("Deteniendo broker...")
+        logging.info("🛑 Deteniendo broker...")
         self.stop_event.set()
 
-        # Esperar a que terminen los threads
-        if hasattr(self, 'monitor_thread'):
+        if self.monitor_thread:
             self.monitor_thread.join(timeout=2)
-        if hasattr(self, 'proxy_thread'):
+        if self.proxy_thread:
             self.proxy_thread.join(timeout=2)
 
-        # Cerrar sockets
         self.frontend.close()
         self.backend.close()
         self.context.term()
-        logging.info("Broker detenido")
-
-    def ReplicateState(self, request, context):
-        self.state = json.loads(request.state)
-        logging.info("Estado replicado recibido")
-        return broker_service_pb2.ReplicateStateResponse(success=True)
-
-    def replicate_state(self):
-        time.sleep(4)
-        state = json.dumps(self.state)
-        if self.secondary_address:
-            try:
-                with grpc.insecure_channel(self.secondary_address) as channel:
-                    stub = broker_service_pb2_grpc.BrokerServiceStub(channel)
-                    request = broker_service_pb2.ReplicateStateRequest(state=state)
-                    stub.ReplicateState(request)
-            except Exception as e:
-                logging.error(f"Error replicando estado a {self.secondary_address}: {e}")
+        logging.info("✅ Broker detenido correctamente")
 
 
 def main():

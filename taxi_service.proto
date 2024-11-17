@@ -10,8 +10,10 @@ service TaxiDatabaseService {
     rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
     rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
     rpc GetAvailableTaxis(GetAvailableTaxisRequest) returns (stream Taxi);
-  rpc ReplicateState(ReplicateStateRequest) returns (ReplicateStateResponse);
+    rpc ReplicateState(ReplicateStateRequest) returns (ReplicateStateResponse);
     rpc PromoteToPrimary(PromoteToPrimaryRequest) returns (PromoteToPrimaryResponse);
+    rpc DemoteToSecondary(DemoteToSecondaryRequest) returns (DemoteToSecondaryResponse);
+    rpc SyncState(SyncStateRequest) returns (SyncStateResponse);
 }
 
 // Mensajes base
@@ -33,7 +35,7 @@ message Taxi {
 message Service {
     string service_id = 1;
     string taxi_id = 2;
-    string status = 3;
+    string status = 3;  // REQUESTED, ASSIGNED, COMPLETED, CANCELLED, DENIED
     Position client_position = 4;
     Position taxi_initial_position = 5;
     string request_timestamp = 6;
@@ -43,28 +45,68 @@ message Service {
 // Health Check
 message HealthCheckRequest {
     string component = 1;
+    string check_type = 2;  // "FULL" o "BASIC"
 }
 
 message HealthCheckResponse {
     bool status = 1;
     string message = 2;
     string timestamp = 3;
+    map<string, string> metrics = 4;  // Métricas adicionales de salud
 }
+
+// Replicación de estado
 message ReplicateStateRequest {
     string state = 1;
+    string timestamp = 2;
+    bool force_sync = 3;
 }
 
 message ReplicateStateResponse {
     bool success = 1;
+    string message = 2;
+    string sync_timestamp = 3;
 }
 
-message PromoteToPrimaryRequest {}
+// Promoción y degradación de servidores
+message PromoteToPrimaryRequest {
+    string timestamp = 1;
+    bool force_promotion = 2;
+}
 
 message PromoteToPrimaryResponse {
     bool success = 1;
+    string message = 2;
+    string promotion_timestamp = 3;
+    string previous_state = 4;
 }
 
-// Registro de taxi
+message DemoteToSecondaryRequest {
+    string timestamp = 1;
+    bool force_demotion = 2;
+}
+
+message DemoteToSecondaryResponse {
+    bool success = 1;
+    string message = 2;
+    string demotion_timestamp = 3;
+}
+
+// Sincronización de estado
+message SyncStateRequest {
+    string source_server = 1;
+    string target_server = 2;
+    bool full_sync = 3;
+    string timestamp = 4;
+}
+
+message SyncStateResponse {
+    bool success = 1;
+    string message = 2;
+    string sync_timestamp = 3;
+    repeated string synced_components = 4;
+}
+
 message RegisterTaxiRequest {
     string taxi_id = 1;
     Position initial_position = 2;
@@ -77,7 +119,6 @@ message RegisterTaxiResponse {
     string taxi_id = 3;
 }
 
-// Actualización de posición
 message UpdateTaxiPositionRequest {
     string taxi_id = 1;
     Position position = 2;
@@ -91,11 +132,13 @@ message UpdateTaxiPositionResponse {
     Position confirmed_position = 3;
 }
 
-// Creación de servicio
 message CreateServiceRequest {
     string client_id = 1;
     Position client_position = 2;
     string timestamp = 3;
+    string status = 4;
+    string taxi_id = 5;
+    Position taxi_initial_position = 6;
 }
 
 message CreateServiceResponse {
@@ -104,11 +147,12 @@ message CreateServiceResponse {
     string assigned_taxi_id = 3;
     string message = 4;
     Position taxi_position = 5;
+    string status = 6;
 }
 
-// Estadísticas
 message GetStatisticsRequest {
     string time_range = 1;
+    repeated string metrics = 2;
 }
 
 message TaxiStats {
@@ -127,7 +171,6 @@ message GetStatisticsResponse {
     string timestamp = 5;
 }
 
-// Consulta de taxis disponibles
 message GetAvailableTaxisRequest {
     Position reference_position = 1;
     double radius = 2;

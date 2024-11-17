@@ -27,6 +27,7 @@ class UsuarioNode:
         self.suscriptor.connect(f"tcp://localhost:{puerto_sub}")
         self.suscriptor.setsockopt_string(zmq.SUBSCRIBE, "resultado_servicio")
 
+        self.logger.info(f"🆔 ID de usuario: {self.id_usuario}")
         self.logger.info(f"📍 Iniciando en posición ({self.posicion['lat']}, {self.posicion['lng']})")
         time.sleep(1)  # Dar tiempo para establecer conexiones
         self.logger.info("🔌 Conexiones establecidas")
@@ -78,6 +79,7 @@ def main():
         posicion={'lat': pos_x, 'lng': pos_y}
     )
     usuario.solicitar_taxi()
+
 
 if __name__ == "__main__":
     main()
