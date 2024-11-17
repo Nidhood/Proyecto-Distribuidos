@@ -1,5 +1,3 @@
-# Modificaciones en taxi.py
-
 import json
 import logging
 import threading
@@ -121,8 +119,7 @@ class TaxiNode:
         return {'lat': nueva_lat, 'lng': nueva_lng}
 
     def mover_taxi(self):
-        """Maneja el movimiento del taxi"""
-        while self.activo and self.servicios_realizados < self.num_servicios_max:
+        while self.activo:
             if self.estado == 'BUSY' and self.destino:
                 nueva_posicion = self.calcular_siguiente_paso()
                 if nueva_posicion != self.posicion:
@@ -136,10 +133,10 @@ class TaxiNode:
                     if self.servicio_actual:
                         self.completar_servicio()
 
-            time.sleep(1)  # Actualizar cada segundo
+            time.sleep(5)
 
     def actualizar_posicion(self):
-        """Envía actualización de posición al servidor"""
+        """Actualiza la posición del taxi en el servidor"""
         mensaje = {
             'tipo': 'posicion_taxi',
             'id_taxi': self.id_taxi,
@@ -150,21 +147,43 @@ class TaxiNode:
         self.publisher.send_string(f"posicion_taxi {json.dumps(mensaje)}")
 
     def completar_servicio(self):
-        """Maneja la finalización de un servicio"""
+        """Completa el servicio actual y actualiza el estado del taxi"""
+        if self.servicio_actual:
+            mensaje = {
+                'tipo': 'servicio_completado',
+                'id_taxi': self.id_taxi,
+                'id_servicio': self.servicio_actual,
+                'timestamp': time.time()
+            }
+            self.publisher.send_string(f"servicio_completado {json.dumps(mensaje)}")
+
         self.servicios_realizados += 1
+        self.logger.info(f"✅ Servicio completado ({self.servicios_realizados}/{self.num_servicios_max})")
+
         if self.servicios_realizados >= self.num_servicios_max:
             self.logger.info("🏁 Completados todos los servicios asignados")
             self.estado = 'OFFLINE'
             self.activo = False
         else:
+            # Reiniciar estado para nuevo servicio
             self.estado = 'AVAILABLE'
             self.destino = None
             self.servicio_actual = None
             self.actualizar_posicion()
-            self.logger.info(f"✅ Servicio completado ({self.servicios_realizados}/{self.num_servicios_max})")
+
+            # Volver a registrar disponibilidad
+            mensaje = {
+                'tipo': 'registro_taxi',
+                'id_taxi': self.id_taxi,
+                'posicion': self.posicion,
+                'estado': self.estado,
+                'timestamp': time.time()
+            }
+            self.publisher.send_string(f"registro_taxi {json.dumps(mensaje)}")
+            self.logger.info("📝 Taxi disponible para nuevos servicios")
+            self.logger.info(f"📍 Posición actual: ({self.posicion['lat']}, {self.posicion['lng']})")
 
     def procesar_mensajes(self):
-        """Procesa mensajes recibidos del servidor"""
         while self.activo:
             try:
                 topic, mensaje = self.subscriber.recv_string().split(" ", 1)
@@ -175,6 +194,7 @@ class TaxiNode:
                         self.estado = 'BUSY'
                         self.destino = datos['posicion_cliente']
                         self.servicio_actual = datos['id_servicio']
+                        self.actualizar_posicion()  # Actualizar estado inmediatamente
                         self.logger.info(f"🎯 Nuevo servicio asignado: {datos['id_servicio']}")
                         self.logger.info(f"📍 Destino: ({self.destino['lat']}, {self.destino['lng']})")
 
@@ -182,7 +202,6 @@ class TaxiNode:
                 self.logger.error(f"❌ Error procesando mensaje: {e}")
 
     def start(self):
-        """Inicia los hilos del taxi"""
         if not self.registro_confirmado:
             self.logger.error("❌ No se puede iniciar sin confirmación de registro")
             return
@@ -191,8 +210,11 @@ class TaxiNode:
         threading.Thread(target=self.mover_taxi, daemon=True).start()
         threading.Thread(target=self.procesar_mensajes, daemon=True).start()
 
+        # Mantener el programa corriendo mientras esté activo
+        while self.activo:
+            time.sleep(1)
+
     def stop(self):
-        """Detiene el taxi"""
         self.estado = 'OFFLINE'
         self.activo = False
         self.subscriber.close()

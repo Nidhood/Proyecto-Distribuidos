@@ -5,6 +5,7 @@ import time
 import uuid
 from datetime import datetime
 
+
 class UsuarioNode:
     def __init__(self, posicion, puerto_pub=5557, puerto_sub=5558):
         self.id_usuario = str(uuid.uuid4())
@@ -42,7 +43,7 @@ class UsuarioNode:
         self.publicador.send_string(f"solicitud_servicio {json.dumps(mensaje)}")
         self.logger.info("🚖 Solicitando taxi...")
 
-        # Esperar respuesta
+        # Esperar respuesta inicial
         try:
             topic, respuesta = self.suscriptor.recv_string().split(" ", 1)
             respuesta = json.loads(respuesta)
@@ -54,14 +55,24 @@ class UsuarioNode:
                 elif respuesta.get('subtipo') == 'confirmacion_servicio':
                     taxi_id = respuesta['id_taxi']
                     taxi_pos = respuesta['posicion_taxi']
-                    self.logger.info(f"✅ Taxi {taxi_id[:6]} asignado")
+                    self.logger.info(f"✅ Taxi {taxi_id} asignado")
                     self.logger.info(f"📍 Posición del taxi: ({taxi_pos['lat']}, {taxi_pos['lng']})")
 
-                    # Simular espera del servicio
-                    self.logger.info("🕐 Iniciando viaje...")
-                    time.sleep(30)  # 30 segundos de viaje
-                    self.logger.info("🏁 Viaje completado")
-                    return True
+                    # Esperar a que el taxi llegue
+                    self.logger.info("🕐 Esperando llegada del taxi...")
+                    while True:
+                        topic, update = self.suscriptor.recv_string().split(" ", 1)
+                        update_data = json.loads(update)
+
+                        if update_data.get('subtipo') == 'servicio_completado' and \
+                                update_data.get('id_cliente') == self.id_usuario:
+                            self.logger.info("🏁 Taxi llegó a destino - Servicio completado")
+                            return True
+
+                        # Timeout de 5 minutos
+                        if time.time() - respuesta['timestamp'] > 300:
+                            self.logger.error("⏰ Timeout - El taxi no llegó en tiempo esperado")
+                            return False
 
         except zmq.ZMQError as e:
             self.logger.error(f"❌ Error en la comunicación: {e}")
@@ -69,6 +80,7 @@ class UsuarioNode:
         except Exception as e:
             self.logger.error(f"❌ Error inesperado: {e}")
             return False
+
 
 def main():
     print("=== 👤 Sistema de Solicitud de Taxi 👤 ===")
