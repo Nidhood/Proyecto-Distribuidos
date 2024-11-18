@@ -22,6 +22,7 @@ CREATE TABLE taxi_locations (
 CREATE TABLE services (
     service_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     taxi_id UUID REFERENCES taxis(taxi_id),
+    client_id UUID NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('REQUESTED', 'ASSIGNED', 'COMPLETED', 'CANCELLED', 'DENIED')),
     request_timestamp TIMESTAMP DEFAULT current_timestamp(),
     completion_timestamp TIMESTAMP,

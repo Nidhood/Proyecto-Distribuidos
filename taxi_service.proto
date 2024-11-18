@@ -14,6 +14,8 @@ service TaxiDatabaseService {
     rpc PromoteToPrimary(PromoteToPrimaryRequest) returns (PromoteToPrimaryResponse);
     rpc DemoteToSecondary(DemoteToSecondaryRequest) returns (DemoteToSecondaryResponse);
     rpc SyncState(SyncStateRequest) returns (SyncStateResponse);
+    rpc UpdateService(UpdateServiceRequest) returns (UpdateServiceResponse);
+    rpc UpdateTaxiStats(UpdateTaxiStatsRequest) returns (UpdateTaxiStatsResponse);
 }
 
 // Mensajes base
@@ -132,13 +134,28 @@ message UpdateTaxiPositionResponse {
     Position confirmed_position = 3;
 }
 
+message UpdateServiceRequest {
+    string service_id = 1;
+    string status = 2;
+    string completion_timestamp = 3;
+    string taxi_id = 4;
+    Position final_position = 5;
+}
+
+message UpdateServiceResponse {
+    bool success = 1;
+    string message = 2;
+    string service_id = 3;
+}
+
 message CreateServiceRequest {
-    string client_id = 1;
-    Position client_position = 2;
-    string timestamp = 3;
-    string status = 4;
-    string taxi_id = 5;
-    Position taxi_initial_position = 6;
+    string service_id = 1;
+    string client_id = 2;
+    Position client_position = 3;
+    string timestamp = 4;
+    string status = 5;
+    string taxi_id = 6;
+    Position taxi_initial_position = 7;
 }
 
 message CreateServiceResponse {
@@ -174,4 +191,17 @@ message GetStatisticsResponse {
 message GetAvailableTaxisRequest {
     Position reference_position = 1;
     double radius = 2;
+}
+
+message UpdateTaxiStatsRequest {
+    string taxi_id = 1;
+    bool increment_total = 2;
+    bool increment_successful = 3;
+}
+
+message UpdateTaxiStatsResponse {
+    bool success = 1;
+    string message = 2;
+    int32 total_services = 3;
+    int32 successful_services = 4;
 }

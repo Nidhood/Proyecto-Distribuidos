@@ -157,21 +157,47 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         message="Taxi not found"
                     )
 
-                # Register new position
+                # Check if location record exists for this taxi
                 cur.execute("""
-                    INSERT INTO taxi_locations (
-                        taxi_id,
-                        latitude,
-                        longitude,
+                    SELECT taxi_id 
+                    FROM taxi_locations 
+                    WHERE taxi_id = %s
+                    """, (request.taxi_id,))
+
+                timestamp = datetime.fromisoformat(
+                    request.position.timestamp) if request.position.timestamp else datetime.now()
+
+                if cur.fetchone():
+                    # Update existing location
+                    cur.execute("""
+                        UPDATE taxi_locations 
+                        SET latitude = %s,
+                            longitude = %s,
+                            timestamp = %s
+                        WHERE taxi_id = %s
+                        RETURNING latitude, longitude
+                        """, (
+                        request.position.latitude,
+                        request.position.longitude,
+                        timestamp,
+                        request.taxi_id
+                    ))
+                else:
+                    # Insert new location if none exists
+                    cur.execute("""
+                        INSERT INTO taxi_locations (
+                            taxi_id,
+                            latitude,
+                            longitude,
+                            timestamp
+                        ) VALUES (%s, %s, %s, %s)
+                        RETURNING latitude, longitude
+                        """, (
+                        request.taxi_id,
+                        request.position.latitude,
+                        request.position.longitude,
                         timestamp
-                    ) VALUES (%s, %s, %s, %s)
-                    RETURNING latitude, longitude
-                    """, (
-                    request.taxi_id,
-                    request.position.latitude,
-                    request.position.longitude,
-                    datetime.fromisoformat(request.timestamp) if request.timestamp else datetime.now()
-                ))
+                    ))
 
                 lat, lng = cur.fetchone()
 
@@ -214,28 +240,35 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         try:
             conn = self.get_connection()
             with conn.cursor() as cur:
-                service_id = str(uuid.uuid4())
                 cur.execute("""
                     INSERT INTO services (
                         service_id,
+                        taxi_id,
+                        client_id,
                         status,
                         request_timestamp,
                         client_latitude,
-                        client_longitude
-                    ) VALUES (%s, 'REQUESTED', %s, %s, %s)
+                        client_longitude,
+                        taxi_initial_latitude,
+                        taxi_initial_longitude
+                    ) VALUES (%s, %s, %s, 'REQUESTED', %s, %s, %s, %s, %s)
                     RETURNING service_id
                     """, (
-                    service_id,
+                    request.service_id,
+                    request.taxi_id,
+                    request.client_id,
                     datetime.fromisoformat(request.timestamp) if request.timestamp else datetime.now(),
                     request.client_position.latitude,
-                    request.client_position.longitude
+                    request.client_position.longitude,
+                    request.taxi_initial_position.latitude,
+                    request.taxi_initial_position.longitude
                 ))
 
                 conn.commit()
-                logger.info(f"✅ Service created successfully with ID: {service_id}")
+                logger.info(f"✅ Service created successfully with ID: {request.service_id}")
                 return taxi_service_pb2.CreateServiceResponse(
                     success=True,
-                    service_id=service_id,
+                    service_id=request.service_id,
                     message="Service created successfully"
                 )
 
@@ -251,50 +284,178 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             if conn:
                 self.return_connection(conn)
 
-    def GetAvailableTaxis(self, request, context):
-        logger.info("🔍 Fetching available taxis...")
+    def UpdateService(self, request, context):
+        logger.info(f"🔄 Updating service {request.service_id}")
         conn = None
         try:
             conn = self.get_connection()
             with conn.cursor() as cur:
+                # Explicitly roll back any existing transaction
+                conn.rollback()
+
+                # Update services table
                 cur.execute("""
-                    SELECT t.taxi_id, t.status, t.total_services, t.successful_services,
-                           l.latitude, l.longitude, l.timestamp
-                    FROM taxis t
-                    JOIN taxi_locations l ON t.taxi_id = l.taxi_id
-                    WHERE t.status = 'AVAILABLE'
-                    AND l.timestamp = (
-                        SELECT MAX(timestamp)
-                        FROM taxi_locations l2
-                        WHERE l2.taxi_id = t.taxi_id
+                    UPDATE services
+                    SET status = %s,
+                        completion_timestamp = %s
+                    WHERE service_id = %s
+                    RETURNING service_id, status;
+                """, (
+                    request.status,
+                    datetime.fromisoformat(
+                        request.completion_timestamp) if request.completion_timestamp else datetime.now(),
+                    request.service_id
+                ))
+
+                # Check if service was updated
+                if cur.rowcount == 0:
+                    logger.warning(f"⚠️ Service {request.service_id} not found")
+                    return taxi_service_pb2.UpdateServiceResponse(
+                        success=False,
+                        message="Service not found",
+                        service_id=request.service_id
                     )
+
+                # Fetch the updated status
+                result = cur.fetchone()
+                updated_status = result[1]
+
+                # Update global statistics
+                if updated_status == 'COMPLETED':
+                    cur.execute("""
+                        UPDATE service_statistics
+                        SET total_services_completed = total_services_completed + 1,
+                            last_update = CURRENT_TIMESTAMP
+                        WHERE stat_id IS NOT NULL
+                    """)
+                elif updated_status == 'DENIED':
+                    cur.execute("""
+                        UPDATE service_statistics
+                        SET total_services_denied = total_services_denied + 1,
+                            last_update = CURRENT_TIMESTAMP
+                        WHERE stat_id IS NOT NULL
                     """)
 
-                results = cur.fetchall()
-                logger.info(f"📊 Found {len(results)} available taxis")
-
-                for row in results:
-                    taxi_id, status, total_services, successful_services, lat, lng, timestamp = row
-                    logger.debug(f"🚖 Available taxi: {taxi_id} at ({lat}, {lng})")
-                    yield taxi_service_pb2.Taxi(
-                        taxi_id=taxi_id,
-                        status=status,
-                        current_position=taxi_service_pb2.Position(
-                            latitude=float(lat),
-                            longitude=float(lng),
-                            timestamp=timestamp.isoformat()
-                        ),
-                        total_services=total_services,
-                        successful_services=successful_services
-                    )
+                conn.commit()
+                logger.info(f"✅ Service {request.service_id} updated successfully")
+                return taxi_service_pb2.UpdateServiceResponse(
+                    success=True,
+                    message="Service updated successfully",
+                    service_id=request.service_id
+                )
 
         except Exception as e:
-            logger.error(f"❌ Error fetching available taxis: {str(e)}")
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details(f"Error getting available taxis: {str(e)}")
+            if conn:
+                conn.rollback()
+            logger.error(f"❌ Error updating service: {str(e)}")
+            return taxi_service_pb2.UpdateServiceResponse(
+                success=False,
+                message=f"Error updating service: {str(e)}",
+                service_id=request.service_id
+            )
         finally:
             if conn:
                 self.return_connection(conn)
+
+    def UpdateTaxiStats(self, request, context):
+        logger.info(f"📊 Updating stats for taxi {request.taxi_id}")
+        conn = None
+        try:
+            conn = self.get_connection()
+            with conn.cursor() as cur:
+                # Verificar si el taxi existe
+                cur.execute("SELECT taxi_id FROM taxis WHERE taxi_id = %s", (request.taxi_id,))
+                if not cur.fetchone():
+                    logger.warning(f"⚠️ Taxi {request.taxi_id} not found")
+                    return taxi_service_pb2.UpdateTaxiStatsResponse(
+                        success=False,
+                        message="Taxi not found"
+                    )
+
+                # Construir la consulta SQL basada en qué contador incrementar
+                update_query = """
+                    UPDATE taxis 
+                    SET """
+
+                if request.increment_total:
+                    update_query += "total_services = total_services + 1"
+                elif request.increment_successful:
+                    update_query += "successful_services = successful_services + 1"
+
+                update_query += """
+                    WHERE taxi_id = %s
+                    RETURNING total_services, successful_services"""
+
+                cur.execute(update_query, (request.taxi_id,))
+                total_services, successful_services = cur.fetchone()
+
+                conn.commit()
+                logger.info(
+                    f"✅ Stats updated for taxi {request.taxi_id}: total={total_services}, successful={successful_services}")
+
+                return taxi_service_pb2.UpdateTaxiStatsResponse(
+                    success=True,
+                    message="Stats updated successfully",
+                    total_services=total_services,
+                    successful_services=successful_services
+                )
+
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"❌ Error updating taxi stats: {str(e)}")
+            return taxi_service_pb2.UpdateTaxiStatsResponse(
+                success=False,
+                message=f"Error updating taxi stats: {str(e)}"
+            )
+        finally:
+            if conn:
+                self.return_connection(conn)
+
+    def GetAvailableTaxis(self, request, context):
+            logger.info("🔍 Fetching available taxis...")
+            conn = None
+            try:
+                conn = self.get_connection()
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT t.taxi_id, t.status, t.total_services, t.successful_services,
+                               l.latitude, l.longitude, l.timestamp
+                        FROM taxis t
+                        JOIN taxi_locations l ON t.taxi_id = l.taxi_id
+                        WHERE t.status = 'AVAILABLE'
+                        AND l.timestamp = (
+                            SELECT MAX(timestamp)
+                            FROM taxi_locations l2
+                            WHERE l2.taxi_id = t.taxi_id
+                        )
+                        """)
+
+                    results = cur.fetchall()
+                    logger.info(f"📊 Found {len(results)} available taxis")
+
+                    for row in results:
+                        taxi_id, status, total_services, successful_services, lat, lng, timestamp = row
+                        logger.debug(f"🚖 Available taxi: {taxi_id} at ({lat}, {lng})")
+                        yield taxi_service_pb2.Taxi(
+                            taxi_id=taxi_id,
+                            status=status,
+                            current_position=taxi_service_pb2.Position(
+                                latitude=float(lat),
+                                longitude=float(lng),
+                                timestamp=timestamp.isoformat()
+                            ),
+                            total_services=total_services,
+                            successful_services=successful_services
+                        )
+
+            except Exception as e:
+                logger.error(f"❌ Error fetching available taxis: {str(e)}")
+                context.set_code(grpc.StatusCode.INTERNAL)
+                context.set_details(f"Error getting available taxis: {str(e)}")
+            finally:
+                if conn:
+                    self.return_connection(conn)
 
 
 def serve():

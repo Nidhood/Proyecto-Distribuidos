@@ -120,7 +120,7 @@ class TaxiNode:
 
     def mover_taxi(self):
         while self.activo:
-            if self.estado == 'BUSY' and self.destino:
+            if self.estado == 'BUSY' and self.destino and self.activo:
                 nueva_posicion = self.calcular_siguiente_paso()
                 if nueva_posicion != self.posicion:
                     self.posicion = nueva_posicion
@@ -132,7 +132,6 @@ class TaxiNode:
                     self.logger.info("🎯 Llegado al destino")
                     if self.servicio_actual:
                         self.completar_servicio()
-
             time.sleep(5)
 
     def actualizar_posicion(self):
@@ -152,6 +151,7 @@ class TaxiNode:
             mensaje = {
                 'tipo': 'servicio_completado',
                 'id_taxi': self.id_taxi,
+                'posicion': self.posicion,
                 'id_servicio': self.servicio_actual,
                 'timestamp': time.time()
             }
@@ -163,6 +163,7 @@ class TaxiNode:
         if self.servicios_realizados >= self.num_servicios_max:
             self.logger.info("🏁 Completados todos los servicios asignados")
             self.estado = 'OFFLINE'
+            self.actualizar_posicion()
             self.activo = False
         else:
             # Reiniciar estado para nuevo servicio
@@ -186,7 +187,9 @@ class TaxiNode:
     def procesar_mensajes(self):
         while self.activo:
             try:
-                topic, mensaje = self.subscriber.recv_string().split(" ", 1)
+                if not self.activo:
+                    break
+                topic, mensaje = self.subscriber.recv_string(flags=zmq.NOBLOCK).split(" ", 1)
                 datos = json.loads(mensaje)
 
                 if topic == "asignacion_taxi" and datos.get('id_taxi') == self.id_taxi:
@@ -194,12 +197,15 @@ class TaxiNode:
                         self.estado = 'BUSY'
                         self.destino = datos['posicion_cliente']
                         self.servicio_actual = datos['id_servicio']
-                        self.actualizar_posicion()  # Actualizar estado inmediatamente
+                        self.actualizar_posicion()
                         self.logger.info(f"🎯 Nuevo servicio asignado: {datos['id_servicio']}")
                         self.logger.info(f"📍 Destino: ({self.destino['lat']}, {self.destino['lng']})")
 
+            except zmq.Again:
+                time.sleep(0.1)
             except Exception as e:
-                self.logger.error(f"❌ Error procesando mensaje: {e}")
+                if self.activo:
+                    self.logger.error(f"❌ Error procesando mensaje: {e}")
 
     def start(self):
         if not self.registro_confirmado:
@@ -215,12 +221,13 @@ class TaxiNode:
             time.sleep(1)
 
     def stop(self):
-        self.estado = 'OFFLINE'
+        self.logger.info("🛑 Deteniendo taxi...")
         self.activo = False
+        time.sleep(1)
         self.subscriber.close()
         self.publisher.close()
         self.context.term()
-        self.logger.info("🛑 Taxi detenido")
+        self.logger.info("🛑 Taxi detenido correctamente")
 
 
 def main():
