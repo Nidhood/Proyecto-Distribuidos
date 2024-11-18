@@ -103,7 +103,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         self.message_thread = threading.Thread(target=self.process_zmq_messages)
         self.message_thread.daemon = True
         self.message_thread.start()
-        time.sleep(1)  # Dar tiempo para conexiones
+        time.sleep(1)
 
     def process_zmq_messages(self):
         """Procesa los mensajes ZMQ recibidos"""
@@ -467,6 +467,20 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         self.is_paused = True
         self.logger.info("Servidor pausado")
 
+    def PromoteToPrimary(self, request, context):
+        """Promueve el servidor secundario a primario"""
+        self.is_primary = True
+        self.resume_server()  # Reanudar el servidor al ser promovido
+        self.logger.info("🔄 Servidor promovido a primario")
+        return taxi_service_pb2.PromoteToPrimaryResponse(success=True)
+
+    def DemoteToSecondary(self, request, context):
+        """Degrada el servidor a secundario"""
+        self.is_primary = False
+        self.pause_server()  # Pausar el servidor al ser degradado
+        self.logger.info("🔄 Servidor degradado a secundario")
+        return taxi_service_pb2.PromoteToPrimaryResponse(success=True)
+
     def resume_server(self):
         """Reanuda el procesamiento de mensajes del servidor"""
         self.is_paused = False
@@ -482,7 +496,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
         try:
             while True:
-                time.sleep(300)
+                time.sleep(5) # Replicar estado cada 5 segundos
                 if self.is_primary:
                     self.cleanup_completed_services()
                     self.replicate_state()

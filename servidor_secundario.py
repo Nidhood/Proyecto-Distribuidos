@@ -60,31 +60,39 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         )
 
     def encontrar_taxi_mas_cercano(self, posicion_cliente):
-        """Encuentra el taxi disponible más cercano"""
-        current_time = time.time()
-        taxis_disponibles = [
-            (id_taxi, info) for id_taxi, info in self.taxis.items()
-            if info['estado'] == 'AVAILABLE' and
-               current_time - info.get('ultimo_update', 0) < 60
-        ]
+        """Busca el taxi disponible más cercano usando gRPC"""
+        try:
+            # Obtener taxis disponibles del servicio de base de datos
+            request = taxi_service_pb2.GetAvailableTaxisRequest()
+            available_taxis_stream = self.db_stub.GetAvailableTaxis(request)
 
-        if not taxis_disponibles:
-            self.logger.warning("❌ No hay taxis disponibles en este momento")
+            # Procesar el stream de taxis disponibles
+            taxis_disponibles = []
+            current_time = time.time()
+
+            for taxi in available_taxis_stream:
+                # Verificar si el taxi está en nuestro sistema local y activo
+                if (taxi.taxi_id in self.taxis and
+                        self.taxis[taxi.taxi_id]['estado'] == 'AVAILABLE' and
+                        current_time - self.taxis[taxi.taxi_id].get('ultimo_update', 0) < 60):
+                    distancia = self.calcular_distancia(
+                        {'lat': taxi.current_position.latitude, 'lng': taxi.current_position.longitude},
+                        posicion_cliente
+                    )
+                    taxis_disponibles.append((taxi.taxi_id, distancia))
+
+            if not taxis_disponibles:
+                self.logger.warning("❌ No hay taxis activos disponibles")
+                return None
+
+            # Ordenar por distancia y seleccionar el más cercano
+            taxi_elegido = min(taxis_disponibles, key=lambda x: x[1])[0]
+            self.logger.info(f"✅ Taxi {taxi_elegido} asignado a cliente en posición {posicion_cliente}")
+            return taxi_elegido
+
+        except Exception as e:
+            self.logger.error(f"❌ Error al buscar taxi disponible: {e}")
             return None
-
-        taxis_con_distancia = []
-        for id_taxi, info in taxis_disponibles:
-            distancia = self.calcular_distancia(info['posicion'], posicion_cliente)
-            taxis_con_distancia.append((id_taxi, info, distancia))
-
-        taxis_ordenados = sorted(
-            taxis_con_distancia,
-            key=lambda x: (x[2], x[0])
-        )
-
-        taxi_elegido = taxis_ordenados[0][0]
-        self.logger.info(f"✅ Taxi {taxi_elegido} asignado a cliente en posición {posicion_cliente}")
-        return taxi_elegido
 
     def start_message_processing(self):
         self.message_thread = threading.Thread(target=self.process_zmq_messages)
@@ -113,12 +121,84 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                                 self.handle_taxi_registration(data)
                             elif topic == "posicion_taxi":
                                 self.handle_taxi_position_update(data)
+                            elif topic == "servicio_completado":
+                                self.handle_service_completion(data)
                 else:
                     time.sleep(1)  # Esperar mientras está pausado
             except Exception as e:
                 self.logger.error(f"Error al procesar mensaje ZMQ: {e}")
                 if not self.active:
                     break
+
+    def handle_service_completion(self, data):
+        """Maneja la finalización de un servicio"""
+        try:
+            service_id = data['id_servicio']
+            if service_id in self.servicios_activos:
+                # Actualizar estado en la base de datos
+                request = taxi_service_pb2.UpdateServiceRequest(
+                    service_id=service_id,
+                    status='COMPLETED',
+                    completion_timestamp=str(datetime.fromtimestamp(data['timestamp'])),
+                    taxi_id=data['id_taxi'],
+                    final_position=taxi_service_pb2.Position(
+                        latitude=data['posicion']['lat'],
+                        longitude=data['posicion']['lng'],
+                        timestamp=str(datetime.fromtimestamp(data['timestamp']))
+                    )
+                )
+                response = self.db_stub.UpdateService(request)
+
+                if response.success:
+                    # Actualizar successful_services del taxi
+                    update_taxi_request = taxi_service_pb2.UpdateTaxiStatsRequest(
+                        taxi_id=data['id_taxi'],
+                        increment_successful=True
+                    )
+                    self.db_stub.UpdateTaxiStats(update_taxi_request)
+
+                    # Resto del código existente...
+                    client_id = self.servicios_activos[service_id]['client_id']
+                    completion_message = {
+                        'tipo': 'resultado_servicio',
+                        'subtipo': 'servicio_completado',
+                        'id_cliente': client_id,
+                        'id_servicio': service_id,
+                        'id_taxi': data['id_taxi'],
+                        'timestamp': data['timestamp'],
+                        'estado': 'COMPLETADO'
+                    }
+                    self.publisher.send_string(f"resultado_servicio {json.dumps(completion_message)}")
+
+                    if data['id_taxi'] in self.taxis:
+                        self.taxis[data['id_taxi']]['estado'] = 'AVAILABLE'
+                        self.taxis[data['id_taxi']]['posicion'] = data.get('posicion_final',
+                                                                           self.taxis[data['id_taxi']]['posicion'])
+
+                    del self.servicios_activos[service_id]
+                    self.logger.info(f"✅ Servicio {service_id} completado correctamente")
+                else:
+                    self.logger.error(f"❌ Error al actualizar servicio en la base de datos: {response.message}")
+
+            else:
+                self.logger.warning(f"⚠️ Servicio {service_id} no encontrado en servicios activos")
+
+        except Exception as e:
+            self.logger.error(f"❌ Error al manejar completación de servicio: {e}")
+
+    def PromoteToPrimary(self, request, context):
+        """Promueve el servidor secundario a primario"""
+        self.is_primary = True
+        self.resume_server()  # Reanudar el servidor al ser promovido
+        self.logger.info("🔄 Servidor promovido a primario")
+        return taxi_service_pb2.PromoteToPrimaryResponse(success=True)
+
+    def DemoteToSecondary(self, request, context):
+        """Degrada el servidor a secundario"""
+        self.is_primary = False
+        self.pause_server()  # Pausar el servidor al ser degradado
+        self.logger.info("🔄 Servidor degradado a secundario")
+        return taxi_service_pb2.PromoteToPrimaryResponse(success=True)
 
     def handle_service_request(self, data):
         try:
@@ -132,28 +212,47 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     'mensaje': 'No hay taxis disponibles'
                 }
                 self.publisher.send_string(f"resultado_servicio {json.dumps(error_message)}")
+                self.logger.info(f"❌ No hay taxis disponibles para el cliente {data['id_cliente']}")
                 return
 
+            # Crear servicio en la base de datos
             service_id = str(uuid.uuid4())
             request = taxi_service_pb2.CreateServiceRequest(
+                service_id=service_id,
                 client_id=data['id_cliente'],
                 client_position=taxi_service_pb2.Position(
                     latitude=data['posicion']['lat'],
                     longitude=data['posicion']['lng'],
                     timestamp=str(datetime.fromtimestamp(data['timestamp']))
                 ),
-                status='REQUESTED'
+                status='REQUESTED',
+                taxi_id=taxi_id,
+                taxi_initial_position=taxi_service_pb2.Position(
+                    latitude=self.taxis[taxi_id]['posicion']['lat'],
+                    longitude=self.taxis[taxi_id]['posicion']['lng'],
+                    timestamp=str(datetime.fromtimestamp(time.time()))
+                )
             )
             response = self.db_stub.CreateService(request)
 
             if response.success:
+                # Actualizar contador total_services del taxi
+                update_taxi_request = taxi_service_pb2.UpdateTaxiStatsRequest(
+                    taxi_id=taxi_id,
+                    increment_total=True
+                )
+                self.db_stub.UpdateTaxiStats(update_taxi_request)
+
+                # Resto del código existente...
                 self.taxis[taxi_id]['estado'] = 'BUSY'
                 self.servicios_activos[service_id] = {
                     'taxi_id': taxi_id,
                     'client_id': data['id_cliente'],
-                    'start_time': time.time()
+                    'start_time': time.time(),
+                    'status': 'ASSIGNED'
                 }
 
+                # Notificaciones existentes...
                 assign_message = {
                     'tipo': 'asignacion_servicio',
                     'id_taxi': taxi_id,
@@ -195,6 +294,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             self.publisher.send_string(f"resultado_servicio {json.dumps(error_message)}")
 
     def handle_taxi_registration(self, data):
+        """Maneja el registro de nuevos taxis"""
         try:
             if data['id_taxi'] not in self.registered_taxis:
                 request = taxi_service_pb2.RegisterTaxiRequest(
@@ -234,6 +334,8 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         'mensaje': response.message
                     }
                     self.publisher.send_string(f"confirmacion_taxi {json.dumps(error_message)}")
+            else:
+                self.logger.info(f"ℹ️ Taxi {data['id_taxi']} ya está registrado")
 
         except Exception as e:
             self.logger.error(f"❌ Error en registro de taxi: {e}")
@@ -246,6 +348,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             self.publisher.send_string(f"confirmacion_taxi {json.dumps(error_message)}")
 
     def handle_taxi_position_update(self, data):
+        """Maneja las actualizaciones de posición de los taxis"""
         try:
             if data['id_taxi'] not in self.registered_taxis:
                 self.handle_taxi_registration(data)
@@ -278,20 +381,50 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             self.logger.error(f"❌ Error en actualización de posición: {e}")
 
     def cleanup_completed_services(self):
+        """Limpia los servicios completados y restaura el estado de los taxis"""
         current_time = time.time()
         completed_services = []
 
-        for service_id, service_info in self.servicios_activos.items():
-            if current_time - service_info['start_time'] >= 30:
+        for service_id, service_info in list(self.servicios_activos.items()):
+            # Timeout de 30 minutos en lugar de 30 segundos
+            if current_time - service_info['start_time'] >= 1800:  # 30 * 60 seconds
                 taxi_id = service_info['taxi_id']
                 if taxi_id in self.taxis:
-                    self.taxis[taxi_id]['posicion'] = self.taxis[taxi_id]['posicion_inicial'].copy()
-                    self.taxis[taxi_id]['estado'] = 'disponible'
-                    completed_services.append(service_id)
+                    # Intentar completar automáticamente el servicio
+                    try:
+                        self.handle_service_completion({
+                            'id_servicio': service_id,
+                            'id_taxi': taxi_id,
+                            'timestamp': current_time,
+                            'posicion_final': self.taxis[taxi_id]['posicion']
+                        })
+                        completed_services.append(service_id)
+                    except Exception as e:
+                        self.logger.error(f"Error completando servicio automáticamente: {e}")
 
         for service_id in completed_services:
             del self.servicios_activos[service_id]
-            self.logger.info(f"✅ Servicio {service_id} completado y taxi liberado")
+
+    def replicate_state(self):
+        """Replica el estado al servidor secundario"""
+        if not self.is_primary:
+            return
+
+        time.sleep(4)
+        state = {
+            'taxis': self.taxis,
+            'servicios_activos': self.servicios_activos,
+            'registered_taxis': list(self.registered_taxis)
+        }
+        if self.secondary_address:
+            try:
+                with grpc.insecure_channel(self.secondary_address) as channel:
+                    stub = taxi_service_pb2_grpc.TaxiDatabaseServiceStub(channel)
+                    request = taxi_service_pb2.ReplicateStateRequest(state=json.dumps(state))
+                    stub.ReplicateState(request)
+                    self.logger.info("🔄 Estado replicado al servidor secundario")
+            except Exception as e:
+                self.logger.error(f"❌ Error replicando estado a {self.secondary_address}: {e}")
 
     def ReplicateState(self, request, context):
         try:
@@ -304,6 +437,21 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         except Exception as e:
             self.logger.error(f"❌ Error al recibir replicación: {e}")
             return taxi_service_pb2.ReplicateStateResponse(success=False)
+
+    def HealthCheck(self, request, context):
+        """Verifica el estado de salud del servidor"""
+        try:
+            return taxi_service_pb2.HealthCheckResponse(
+                status=True,
+                message="Server is healthy",
+                timestamp=datetime.now().isoformat()
+            )
+        except Exception as e:
+            return taxi_service_pb2.HealthCheckResponse(
+                status=False,
+                message=f"Health check failed: {str(e)}",
+                timestamp=datetime.now().isoformat()
+            )
 
     def pause_server(self):
         """Pausa el procesamiento de mensajes del servidor"""
@@ -352,6 +500,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             self.db_channel.close()
             server.stop(0)
 
+
 def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     server = TaxiServer(is_primary=False)
@@ -361,6 +510,7 @@ def main():
         print("\n🛑 Servidor detenido por el usuario")
     except Exception as e:
         print(f"❌ Error: {e}")
+
 
 if __name__ == "__main__":
     main()
