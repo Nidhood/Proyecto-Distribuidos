@@ -2,6 +2,23 @@ syntax = "proto3";
 
 package taxi_service;
 
+// Servicios principales
+service TaxiDatabaseService {
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+    rpc RegisterTaxi(RegisterTaxiRequest) returns (RegisterTaxiResponse);
+    rpc UpdateTaxiPosition(UpdateTaxiPositionRequest) returns (UpdateTaxiPositionResponse);
+    rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
+    rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
+    rpc GetAvailableTaxis(GetAvailableTaxisRequest) returns (stream Taxi);
+    rpc ReplicateState(ReplicateStateRequest) returns (ReplicateStateResponse);
+    rpc PromoteToPrimary(PromoteToPrimaryRequest) returns (PromoteToPrimaryResponse);
+    rpc DemoteToSecondary(DemoteToSecondaryRequest) returns (DemoteToSecondaryResponse);
+    rpc SyncState(SyncStateRequest) returns (SyncStateResponse);
+    rpc UpdateService(UpdateServiceRequest) returns (UpdateServiceResponse);
+    rpc UpdateTaxiStats(UpdateTaxiStatsRequest) returns (UpdateTaxiStatsResponse);
+}
+
+// Mensajes base
 message Position {
     double latitude = 1;
     double longitude = 2;
@@ -11,53 +28,134 @@ message Position {
 message Taxi {
     string taxi_id = 1;
     string status = 2;
-    Position position = 3;
-    int32 total_services = 4;
-    int32 successful_services = 5;
+    Position current_position = 3;
+    Position initial_position = 4;
+    int32 total_services = 5;
+    int32 successful_services = 6;
 }
 
 message Service {
     string service_id = 1;
     string taxi_id = 2;
-    string status = 3;
+    string status = 3;  // REQUESTED, ASSIGNED, COMPLETED, CANCELLED, DENIED
     Position client_position = 4;
-    Position taxi_position = 5;
+    Position taxi_initial_position = 5;
     string request_timestamp = 6;
     string completion_timestamp = 7;
 }
 
-// Health Check Messages
-message HealthCheckRequest {}
+// Health Check
+message HealthCheckRequest {
+    string component = 1;
+    string check_type = 2;  // "FULL" o "BASIC"
+}
+
 message HealthCheckResponse {
     bool status = 1;
     string message = 2;
+    string timestamp = 3;
+    map<string, string> metrics = 4;  // Métricas adicionales de salud
 }
 
-// Database Service Messages
+// Replicación de estado
+message ReplicateStateRequest {
+    string state = 1;
+    string timestamp = 2;
+    bool force_sync = 3;
+}
+
+message ReplicateStateResponse {
+    bool success = 1;
+    string message = 2;
+    string sync_timestamp = 3;
+}
+
+// Promoción y degradación de servidores
+message PromoteToPrimaryRequest {
+    string timestamp = 1;
+    bool force_promotion = 2;
+}
+
+message PromoteToPrimaryResponse {
+    bool success = 1;
+    string message = 2;
+    string promotion_timestamp = 3;
+    string previous_state = 4;
+}
+
+message DemoteToSecondaryRequest {
+    string timestamp = 1;
+    bool force_demotion = 2;
+}
+
+message DemoteToSecondaryResponse {
+    bool success = 1;
+    string message = 2;
+    string demotion_timestamp = 3;
+}
+
+// Sincronización de estado
+message SyncStateRequest {
+    string source_server = 1;
+    string target_server = 2;
+    bool full_sync = 3;
+    string timestamp = 4;
+}
+
+message SyncStateResponse {
+    bool success = 1;
+    string message = 2;
+    string sync_timestamp = 3;
+    repeated string synced_components = 4;
+}
+
 message RegisterTaxiRequest {
     string taxi_id = 1;
     Position initial_position = 2;
+    string status = 3;
 }
 
 message RegisterTaxiResponse {
     bool success = 1;
     string message = 2;
+    string taxi_id = 3;
 }
 
 message UpdateTaxiPositionRequest {
     string taxi_id = 1;
     Position position = 2;
     string status = 3;
+    string timestamp = 4;
 }
 
 message UpdateTaxiPositionResponse {
     bool success = 1;
     string message = 2;
+    Position confirmed_position = 3;
+}
+
+message UpdateServiceRequest {
+    string service_id = 1;
+    string status = 2;
+    string completion_timestamp = 3;
+    string taxi_id = 4;
+    Position final_position = 5;
+}
+
+message UpdateServiceResponse {
+    bool success = 1;
+    string message = 2;
+    string service_id = 3;
 }
 
 message CreateServiceRequest {
-    string client_id = 1;
-    Position client_position = 2;
+    string service_id = 1;
+    string client_id = 2;
+    Position client_position = 3;
+    string timestamp = 4;
+    string status = 5;
+    string taxi_id = 6;
+    Position taxi_initial_position = 7;
 }
 
 message CreateServiceResponse {
@@ -65,30 +163,45 @@ message CreateServiceResponse {
     string service_id = 2;
     string assigned_taxi_id = 3;
     string message = 4;
+    Position taxi_position = 5;
+    string status = 6;
 }
 
-message GetStatisticsRequest {}
+message GetStatisticsRequest {
+    string time_range = 1;
+    repeated string metrics = 2;
+}
 
+message TaxiStats {
+    string taxi_id = 1;
+    int32 total_services = 2;
+    int32 successful_services = 3;
+    repeated Position historical_positions = 4;
+    Position last_known_position = 5;
+}
 
 message GetStatisticsResponse {
     int32 total_services = 1;
     int32 completed_services = 2;
     int32 denied_services = 3;
     map<string, TaxiStats> taxi_statistics = 4;
+    string timestamp = 5;
 }
 
-message TaxiStats {
-    int32 total_services = 1;
-    int32 successful_services = 2;
-    repeated Position historical_positions = 3;
+message GetAvailableTaxisRequest {
+    Position reference_position = 1;
+    double radius = 2;
 }
 
-service TaxiDatabaseService {
-    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
-    rpc RegisterTaxi(RegisterTaxiRequest) returns (RegisterTaxiResponse);
-    rpc UpdateTaxiPosition(UpdateTaxiPositionRequest) returns (UpdateTaxiPositionResponse);
-    rpc GetAvailableTaxis(GetStatisticsRequest) returns (stream Taxi);
-    rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
-    rpc GetStatistics(GetStatisticsRequest) returns (GetStatisticsResponse);
+message UpdateTaxiStatsRequest {
+    string taxi_id = 1;
+    bool increment_total = 2;
+    bool increment_successful = 3;
 }
 
+message UpdateTaxiStatsResponse {
+    bool success = 1;
+    string message = 2;
+    int32 total_services = 3;
+    int32 successful_services = 4;
+}
