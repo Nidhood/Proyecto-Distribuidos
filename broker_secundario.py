@@ -135,11 +135,6 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
             logging.info("🔄 Proxy de mensajes iniciado")
 
 
-            # Mantener el broker activo
-            while not self.stop_event.is_set():
-                time.sleep(1)
-
-
         except KeyboardInterrupt:
             logging.info("Broker detenido por el usuario")
             self.stop()
