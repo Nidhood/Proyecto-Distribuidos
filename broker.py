@@ -94,6 +94,37 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
                 if not self.stop_event.is_set():
                     time.sleep(1)
                     continue
+    def HealthCheck(self, request, context):
+        try:
+            return broker_service_pb2.HealthCheckResponse(
+                status=True,
+                message="Broker is healthy",
+                timestamp=datetime.now().isoformat()
+            )
+        except Exception as e:
+            return broker_service_pb2.HealthCheckResponse(
+                status=False,
+                message=f"Health check failed: {str(e)}",
+                timestamp=datetime.now().isoformat()
+            )
+
+    def ReplicateState(self, request, context):
+        self.state = json.loads(request.state)
+        logging.info("Estado replicado recibido")
+        return broker_service_pb2.ReplicateStateResponse(success=True)
+
+    def replicate_state(self):
+        time.sleep(4)
+        state = json.dumps(self.state)
+        if self.secondary_address:
+            try:
+                with grpc.insecure_channel(self.secondary_address) as channel:
+                    stub = broker_service_pb2_grpc.BrokerServiceStub(channel)
+                    request = broker_service_pb2.ReplicateStateRequest(state=state)
+                    stub.ReplicateState(request)
+            except Exception as e:
+                logging.error(f"Error replicando estado a {self.secondary_address}: {e}")
+
 
     def start(self):
         """Inicia el broker y el monitoreo de suscripciones"""

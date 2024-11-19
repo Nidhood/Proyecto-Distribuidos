@@ -56,29 +56,48 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
 
         while not self.stop_event.is_set():
             try:
-                socks = dict(poller.poll(timeout=1000))
+                socks = dict(poller.poll(timeout=100))
                 if self.backend in socks:
                     event = self.backend.recv()
-                    if event[0] == 1:  # Suscripción
+                    if event:  # Verificar que el evento no está vacío
+                        # El primer byte indica suscripción (1) o desuscripción (0)
+                        is_subscribe = event[0] == 1
                         topic = event[1:].decode('utf-8')
-                        self.active_subscribers.add(topic)
-                        logging.info(f"Nueva suscripción: {topic}")
-                    elif event[0] == 0:  # Desuscripción
-                        topic = event[1:].decode('utf-8')
-                        self.active_subscribers.discard(topic)
-                        logging.info(f"Desuscripción: {topic}")
+
+                        if is_subscribe:
+                            self.active_subscribers.add(topic)
+                            logging.info(f"📥 Nueva suscripción: {topic}")
+                            # Reenviar explícitamente el mensaje de suscripción
+                            self.frontend.send(event)
+                        else:
+                            self.active_subscribers.discard(topic)
+                            logging.info(f"📤 Desuscripción: {topic}")
             except Exception as e:
-                logging.error(f"Error en monitoreo de suscripciones: {e}")
+                logging.error(f"❌ Error en monitoreo de suscripciones: {e}")
                 if not self.stop_event.is_set():
+                    time.sleep(1)  # Esperar antes de reintentar
                     continue
 
     def _forward_messages(self):
         """Reenvía mensajes del frontend al backend"""
-        try:
-            zmq.proxy(self.frontend, self.backend)
-        except zmq.error.ZMQError as e:
-            if not self.stop_event.is_set():
-                logging.error(f"Error en proxy ZMQ: {e}")
+        poller = zmq.Poller()
+        poller.register(self.frontend, zmq.POLLIN)
+
+        while not self.stop_event.is_set():
+            try:
+                socks = dict(poller.poll(timeout=100))
+                if self.frontend in socks:
+                    message = self.frontend.recv()
+                    if message:  # Verificar mensaje no vacío
+                        topic = message.split(b' ')[0]  # Extraer topic del mensaje
+                        logging.debug(f"↔️ Reenviando mensaje para topic: {topic}")
+                        self.backend.send(message)
+
+            except Exception as e:
+                logging.error(f"❌ Error en reenvío de mensajes: {e}")
+                if not self.stop_event.is_set():
+                    time.sleep(1)
+                    continue
 
     def start_primary_functions(self):
         """Inicia las funciones del broker primario"""
@@ -92,31 +111,34 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
             self.backend.bind(f"tcp://*:{self.backend_port}")
 
             # Configuración importante para el backend
-            self.backend.setsockopt(zmq.XPUB_VERBOSE, 1)
-            self.backend.setsockopt(zmq.LINGER, 0)
-            self.frontend.setsockopt(zmq.LINGER, 0)
+            self.backend.setsockopt(zmq.XPUB_VERBOSE, 1)  # Habilitar mensajes verbosos
+            self.backend.setsockopt(zmq.RCVHWM, 0)  # Sin límite de mensajes
+            self.frontend.setsockopt(zmq.RCVHWM, 0)  # Sin límite de mensajes
 
             # Aumentar el high water mark para evitar pérdida de mensajes
-            self.frontend.setsockopt(zmq.SNDHWM, 1000000)
-            self.frontend.setsockopt(zmq.RCVHWM, 1000000)
-            self.backend.setsockopt(zmq.SNDHWM, 1000000)
-            self.backend.setsockopt(zmq.RCVHWM, 1000000)
+            self.backend.setsockopt(zmq.TCP_KEEPALIVE, 1)
+            self.backend.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 300)
+            self.frontend.setsockopt(zmq.TCP_KEEPALIVE, 1)
+            self.frontend.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 300)
 
             # Iniciar thread de monitoreo
             self.monitor_thread = Thread(target=self._monitor_subscriptions)
             self.monitor_thread.daemon = True
             self.monitor_thread.start()
+            logging.info("📡 Monitor de suscripciones iniciado")
+
 
             # Iniciar thread de reenvío de mensajes
             self.proxy_thread = Thread(target=self._forward_messages)
             self.proxy_thread.daemon = True
             self.proxy_thread.start()
+            logging.info("🔄 Proxy de mensajes iniciado")
+
 
             # Mantener el broker activo
             while not self.stop_event.is_set():
                 time.sleep(1)
-                if self.is_primary:
-                    self.replicate_state()
+
 
         except KeyboardInterrupt:
             logging.info("Broker detenido por el usuario")
@@ -127,22 +149,18 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
 
     def stop(self):
         """Detiene el broker y libera recursos"""
-        logging.info("Deteniendo broker...")
+        logging.info("🛑 Deteniendo broker...")
         self.stop_event.set()
 
-        # Esperar a que terminen los threads
-        if hasattr(self, 'monitor_thread'):
+        if self.monitor_thread:
             self.monitor_thread.join(timeout=2)
-        if hasattr(self, 'proxy_thread'):
+        if self.proxy_thread:
             self.proxy_thread.join(timeout=2)
 
-        # Cerrar sockets
-        if hasattr(self, 'frontend'):
-            self.frontend.close()
-        if hasattr(self, 'backend'):
-            self.backend.close()
+        self.frontend.close()
+        self.backend.close()
         self.context.term()
-        logging.info("Broker detenido")
+        logging.info("✅ Broker detenido correctamente")
 
 
 
@@ -159,7 +177,7 @@ def main():
         broker_service_pb2_grpc.add_BrokerServiceServicer_to_server(broker, grpc_server)
         grpc_server.add_insecure_port(f'[::]:{broker.grpc_port}')
         grpc_server.start()
-        logging.info(f'gRPC server started on port {broker.grpc_port}')
+        logging.info(f'🚀 Servidor gRPC iniciado en puerto {broker.grpc_port}')
 
         # Mantener el servidor gRPC activo
         while True:

@@ -427,9 +427,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     stub = taxi_service_pb2_grpc.TaxiDatabaseServiceStub(channel)
                     request = taxi_service_pb2.ReplicateStateRequest(state=json.dumps(state))
                     stub.ReplicateState(request)
-                    self.logger.info("🔄 Estado replicado al servidor secundario")
+                    #self.logger.info("🔄 Estado replicado al servidor secundario")
             except Exception as e:
-                self.logger.error(f"❌ Error replicando estado a {self.secondary_address}: {e}")
+                self.logger.error(f"❌ Error replicando estado a {self.secondary_address}")
 
     def ReplicateState(self, request, context):
         """Recibe la replicación del estado"""
@@ -496,10 +496,10 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
         try:
             while True:
-                time.sleep(5) # Replicar estado cada 5 segundos
+                time.sleep(1) # Replicar estado cada 1 segundos
                 if self.is_primary:
                     self.cleanup_completed_services()
-                    self.replicate_state()
+                    #self.replicate_state()
         except KeyboardInterrupt:
             self.logger.info("🛑 Servidor detenido por el usuario")
         finally:

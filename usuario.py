@@ -74,6 +74,7 @@ class UsuarioNode:
                             self.logger.error("⏰ Timeout - El taxi no llegó en tiempo esperado")
                             return False
 
+
         except zmq.ZMQError as e:
             self.logger.error(f"❌ Error en la comunicación: {e}")
             return False

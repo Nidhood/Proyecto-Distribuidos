@@ -432,7 +432,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             self.taxis = state['taxis']
             self.servicios_activos = state['servicios_activos']
             self.registered_taxis = set(state['registered_taxis'])
-            self.logger.info("✅ Estado replicado recibido")
+           #self.logger.info("✅ Estado replicado recibido")
             return taxi_service_pb2.ReplicateStateResponse(success=True)
         except Exception as e:
             self.logger.error(f"❌ Error al recibir replicación: {e}")
@@ -462,6 +462,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         """Reanuda el procesamiento de mensajes del servidor"""
         self.is_paused = False
         self.logger.info("Servidor reanudado")
+        # Re-suscribir a los tópicos de mensajes
+        for topic in ["solicitud_servicio", "registro_taxi", "posicion_taxi", "servicio_completado"]:
+            self.subscriber.setsockopt_string(zmq.SUBSCRIBE, topic)
 
     def PromoteToPrimary(self, request, context):
         """Promueve el servidor secundario a primario"""
@@ -486,8 +489,10 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
         try:
             while True:
-                time.sleep(1)
-                self.cleanup_completed_services()
+                time.sleep(5)
+                if self.is_primary:
+                    self.cleanup_completed_services()
+
         except KeyboardInterrupt:
             self.logger.info("🛑 Servidor detenido por el usuario")
         finally:
