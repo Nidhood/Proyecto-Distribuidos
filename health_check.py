@@ -125,14 +125,19 @@ class ServerHealthCheck:
                # self.handle_health_status(False, f"🚨 Fallo en servidor: {server_message}")
                 self.handle_health_status(False, f"🚨 Fallo en servidor")
                 self.promote_backup_to_primary()
+                temp:str =self.server_address
                 self.server_address = self.backup_address
+                self.backup_address = temp
+
+
             else:
                 #self.handle_health_status(False, f"🚨 Fallo en broker: {broker_message}")
                 self.handle_health_status(False, f"🚨 Fallo en broker")
                 self.promote_broker_backup_to_primary()
-                self.logger.info("🔄 Cambiando broker a respaldo")
+                temp:str =self.broker_address
                 self.broker_address = self.broker_backup_address
-                self.logger.info("🔄 Cambiando broker a primario")
+                self.broker_backup_address = temp
+
 
             self.stop_event.wait(timeout=self.check_interval)
 

@@ -415,7 +415,6 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         if not self.is_primary:
             return
 
-        time.sleep(4)
         state = {
             'taxis': self.taxis,
             'servicios_activos': self.servicios_activos,
@@ -499,7 +498,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 time.sleep(1) # Replicar estado cada 1 segundos
                 if self.is_primary:
                     self.cleanup_completed_services()
-                    #self.replicate_state()
+                    self.replicate_state()
         except KeyboardInterrupt:
             self.logger.info("🛑 Servidor detenido por el usuario")
         finally:

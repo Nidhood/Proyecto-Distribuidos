@@ -1,5 +1,6 @@
 import json
 import logging
+import socket
 from concurrent import futures
 from datetime import datetime
 from threading import Thread, Event
@@ -12,9 +13,13 @@ import broker_service_pb2
 import broker_service_pb2_grpc
 
 
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
 class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
-    def __init__(self, is_primary=False, frontend_port=5557, backend_port=5558, grpc_port=50055, secondary_address=50053):
-        self.is_primary = is_primary
+    def __init__(self, frontend_port=5557, backend_port=5558, grpc_port=50055, secondary_address=50053):
+        self.is_primary = not (is_port_in_use(frontend_port) or is_port_in_use(backend_port))
         self.frontend_port = frontend_port
         self.backend_port = backend_port
         self.grpc_port = grpc_port
@@ -28,6 +33,10 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
         self.state = {}
 
         logging.info(f'Broker {"primario" if self.is_primary else "secundario"} iniciado ')
+
+        if self.is_primary:
+            self.start_primary_functions()
+
 
     def PromoteToPrimary(self, request, context):
         self.is_primary = True
@@ -98,6 +107,8 @@ class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
                 if not self.stop_event.is_set():
                     time.sleep(1)
                     continue
+
+
 
     def start_primary_functions(self):
         """Inicia las funciones del broker primario"""
