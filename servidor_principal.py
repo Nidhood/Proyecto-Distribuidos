@@ -194,6 +194,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
 
                     del self.servicios_activos[service_id]
                     self.logger.info(f"✅ Servicio {service_id} completado correctamente")
+
+                    # Replicar estado después de la actualización
+                    self.replicate_state()
                 else:
                     self.logger.error(f"❌ Error al actualizar servicio en la base de datos: {response.message}")
 
@@ -291,6 +294,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 self.taxis[taxi_id]['servicios_realizados'] += 1
                 self.logger.info(f"✅ Servicio {service_id} asignado al taxi {taxi_id}")
 
+                # Replicar estado después de la actualización
+                self.replicate_state()
+
             else:
                 error_message = {
                     'tipo': 'resultado_servicio',
@@ -342,6 +348,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         'estado': 'success'
                     }
                     self.publisher.send_string(f"confirmacion_taxi {json.dumps(confirm_message)}")
+                    # Replicar estado después de la actualización
+                    self.replicate_state()
+
                 else:
                     self.logger.error(f"❌ Error al registrar taxi: {response.message}")
                     error_message = {
@@ -391,6 +400,9 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                             'ultimo_update': time.time()
                         })
                         self.logger.info(f"📍 Posición actualizada para taxi {data['id_taxi']}")
+                        # Replicar estado después de la actualización
+                        self.replicate_state()
+
                 else:
                     self.logger.error(f"❌ Error al actualizar posición: {response.message}")
 
@@ -427,7 +439,6 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         if not self.is_primary:
             return
 
-        time.sleep(4)
         state = {
             'taxis': self.taxis,
             'servicios_activos': self.servicios_activos,
@@ -439,9 +450,11 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     stub = taxi_service_pb2_grpc.TaxiDatabaseServiceStub(channel)
                     request = taxi_service_pb2.ReplicateStateRequest(state=json.dumps(state))
                     stub.ReplicateState(request)
-                   # self.logger.info("🔄 Estado replicado al servidor secundario")
+                    self.logger.info("🔄 Estado replicado al servidor secundario")
             except Exception as e:
                 self.logger.error(f"❌ Error replicando estado a {self.secondary_address}")
+                time.sleep(1)
+                self.replicate_state()
 
     def ReplicateState(self, request, context):
         """Recibe la replicación del estado"""
@@ -515,7 +528,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 time.sleep(1)
                 if self.is_primary:
                     self.cleanup_completed_services()
-                    self.replicate_state()
+                    #self.replicate_state()
         except KeyboardInterrupt:
             self.logger.info("🛑 Servidor detenido por el usuario")
         finally:
