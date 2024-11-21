@@ -1,5 +1,7 @@
 zmq~=0.0.0
 pyzmq~=26.2.0
 grpcio~=1.68.0
+grpcio-tools~=1.68.0
 psycopg2~=2.9.10
 psycopg2-binary~=2.9.10
+protobuf~=4.21.6

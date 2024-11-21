@@ -4,7 +4,7 @@ from concurrent import futures
 import uuid
 import psycopg2
 from psycopg2 import pool
-from datetime import datetime
+from datetime import datetime, timezone
 import taxi_service_pb2
 import taxi_service_pb2_grpc
 
@@ -58,14 +58,14 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 return taxi_service_pb2.HealthCheckResponse(
                     status=True,
                     message="Database connection successful",
-                    timestamp=datetime.now().isoformat()
+                    timestamp=datetime.now(timezone.utc).isoformat()
                 )
         except Exception as e:
             logger.error(f"🔴 Health check failed: {str(e)}")
             return taxi_service_pb2.HealthCheckResponse(
                 status=False,
                 message=f"Database connection failed: {str(e)}",
-                timestamp=datetime.now().isoformat()
+                timestamp=datetime.now(timezone.utc).isoformat()
             )
         finally:
             if conn:
@@ -100,8 +100,8 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     """, (
                     request.taxi_id,
                     request.status or 'AVAILABLE',
-                    datetime.now(),
-                    datetime.now()
+                    datetime.now(timezone.utc),
+                    datetime.now(timezone.utc)
                 ))
 
                 # Register initial position
@@ -116,7 +116,7 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     request.taxi_id,
                     request.initial_position.latitude,
                     request.initial_position.longitude,
-                    datetime.now()
+                    datetime.now(timezone.utc)
                 ))
 
                 conn.commit()
@@ -165,7 +165,7 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     """, (request.taxi_id,))
 
                 timestamp = datetime.fromisoformat(
-                    request.position.timestamp) if request.position.timestamp else datetime.now()
+                    request.position.timestamp) if request.position.timestamp else datetime.now(timezone.utc)
 
                 if cur.fetchone():
                     # Update existing location
@@ -207,7 +207,7 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         UPDATE taxis 
                         SET status = %s, last_update = %s 
                         WHERE taxi_id = %s
-                        """, (request.status, datetime.now(), request.taxi_id))
+                        """, (request.status, datetime.now(timezone.utc), request.taxi_id))
 
                 conn.commit()
                 logger.info(f"✅ Position updated for taxi {request.taxi_id} at ({lat}, {lng})")
@@ -218,7 +218,7 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     confirmed_position=taxi_service_pb2.Position(
                         latitude=lat,
                         longitude=lng,
-                        timestamp=datetime.now().isoformat()
+                        timestamp=datetime.now(timezone.utc).isoformat()
                     )
                 )
 
@@ -257,7 +257,7 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     request.service_id,
                     request.taxi_id,
                     request.client_id,
-                    datetime.fromisoformat(request.timestamp) if request.timestamp else datetime.now(),
+                    datetime.fromisoformat(request.timestamp) if request.timestamp else datetime.now(timezone.utc),
                     request.client_position.latitude,
                     request.client_position.longitude,
                     request.taxi_initial_position.latitude,
@@ -293,6 +293,37 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 # Explicitly roll back any existing transaction
                 conn.rollback()
 
+                # Get the service details to determine the client and taxi
+                cur.execute("""
+                    SELECT client_id, taxi_id, request_timestamp 
+                    FROM services 
+                    WHERE service_id = %s
+                """, (request.service_id,))
+
+                service_data = cur.fetchone()
+                if not service_data:
+                    logger.warning(f"⚠️ Service {request.service_id} not found")
+                    return taxi_service_pb2.UpdateServiceResponse(
+                        success=False,
+                        message="Service not found",
+                        service_id=request.service_id
+                    )
+
+                client_id, taxi_id, request_timestamp = service_data
+                current_time = datetime.now(timezone.utc)
+
+                # Ensure request_timestamp is in UTC
+                if request_timestamp.tzinfo is None:
+                    # If no timezone info, assume it's in UTC
+                    request_timestamp = request_timestamp.replace(tzinfo=timezone.utc)
+                else:
+                    # Convert to UTC if it's not in UTC
+                    request_timestamp = request_timestamp.astimezone(timezone.utc)
+
+                # Calculate the time difference in seconds
+                response_duration_seconds = (current_time - request_timestamp).total_seconds()
+                response_duration_interval = f"{response_duration_seconds} seconds"
+
                 # Update services table
                 cur.execute("""
                     UPDATE services
@@ -302,42 +333,39 @@ class DatabaseManager(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     RETURNING service_id, status;
                 """, (
                     request.status,
-                    datetime.fromisoformat(
-                        request.completion_timestamp) if request.completion_timestamp else datetime.now(),
+                    current_time,
                     request.service_id
                 ))
 
-                # Check if service was updated
-                if cur.rowcount == 0:
-                    logger.warning(f"⚠️ Service {request.service_id} not found")
-                    return taxi_service_pb2.UpdateServiceResponse(
-                        success=False,
-                        message="Service not found",
-                        service_id=request.service_id
-                    )
+                # Map service status to statistics status
+                status_mapping = {
+                    'COMPLETED': 'accepted',
+                    'DENIED': 'denied',
+                    'TIMEOUT': 'timeout'
+                }
+                stats_status = status_mapping.get(request.status)
 
-                # Fetch the updated status
-                result = cur.fetchone()
-                updated_status = result[1]
-
-                # Update global statistics
-                if updated_status == 'COMPLETED':
+                if stats_status:
                     cur.execute("""
-                        UPDATE service_statistics
-                        SET total_services_completed = total_services_completed + 1,
-                            last_update = CURRENT_TIMESTAMP
-                        WHERE stat_id IS NOT NULL
-                    """)
-                elif updated_status == 'DENIED':
-                    cur.execute("""
-                        UPDATE service_statistics
-                        SET total_services_denied = total_services_denied + 1,
-                            last_update = CURRENT_TIMESTAMP
-                        WHERE stat_id IS NOT NULL
-                    """)
+                        INSERT INTO service_statistics (
+                            user_id,           
+                            taxi_id,         
+                            request_time, 
+                            response_time,
+                            status,
+                            response_duration
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        client_id,
+                        taxi_id,
+                        request_timestamp,
+                        current_time,
+                        stats_status,
+                        response_duration_interval
+                    ))
 
                 conn.commit()
-                logger.info(f"✅ Service {request.service_id} updated successfully")
+                logger.info(f"✅ Service {request.service_id} and statistics updated successfully")
                 return taxi_service_pb2.UpdateServiceResponse(
                     success=True,
                     message="Service updated successfully",

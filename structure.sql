@@ -42,10 +42,12 @@ CREATE TABLE services (
 -- Tabla de estadísticas globales
 CREATE TABLE service_statistics (
     stat_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    total_services_requested INT DEFAULT 0,
-    total_services_completed INT DEFAULT 0,
-    total_services_denied INT DEFAULT 0,
-    last_update TIMESTAMP DEFAULT current_timestamp()
+    request_time TIMESTAMP DEFAULT current_timestamp(),
+    response_time TIMESTAMP,
+    status VARCHAR(50) CHECK (status IN ('accepted', 'denied', 'timeout')),
+    response_duration INTERVAL,
+    user_id UUID,
+    taxi_id UUID
 );
 
 -- Índices adicionales para optimizar consultas comunes

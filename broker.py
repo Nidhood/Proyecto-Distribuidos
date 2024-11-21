@@ -17,6 +17,7 @@ def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', port)) == 0
 
+
 class TaxiBroker(broker_service_pb2_grpc.BrokerServiceServicer):
     def __init__(self, frontend_port=5557, backend_port=5558, grpc_port=50053, secondary_address=50055):
         self.is_primary = not (is_port_in_use(frontend_port) or is_port_in_use(backend_port))
