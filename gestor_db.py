@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import taxi_service_pb2
 import taxi_service_pb2_grpc
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
