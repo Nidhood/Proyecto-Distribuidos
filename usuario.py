@@ -60,6 +60,7 @@ class UsuarioNode:
 
                     # Esperar a que el taxi llegue
                     self.logger.info("🕐 Esperando llegada del taxi...")
+                    start_time = time.time()
                     while True:
                         topic, update = self.suscriptor.recv_string().split(" ", 1)
                         update_data = json.loads(update)
@@ -70,7 +71,7 @@ class UsuarioNode:
                             return True
 
                         # Timeout de 5 minutos
-                        if time.time() - respuesta['timestamp'] > 300:
+                        if time.time() - start_time > 300:
                             self.logger.error("⏰ Timeout - El taxi no llegó en tiempo esperado")
                             return False
 
