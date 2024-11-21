@@ -191,6 +191,7 @@ def main():
     )
 
     health_checker = ServerHealthCheck(check_interval=10)
+
     try:
         health_checker.start()
         while True:
