@@ -30,7 +30,7 @@ class MultiNodeLauncher:
     def generate_taxi_data(self) -> Dict:
         """Genera datos aleatorios para un taxi"""
         velocidad = random.uniform(30.0, 80.0)
-        num_servicios = random.randint(3, 10)
+        num_servicios = 1
         posicion = self.generate_unique_position()
 
         return {
@@ -55,6 +55,9 @@ class MultiNodeLauncher:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(self.log_dir, f"{process_name}_{timestamp}.log")
 
+        # Obtener el directorio donde se encuentra el script principal
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+
         if platform.system() == "Windows":
             # Para Windows, usar 'start' para crear nueva ventana
             create_new_console = subprocess.CREATE_NEW_CONSOLE
@@ -62,24 +65,39 @@ class MultiNodeLauncher:
                 cmd,
                 creationflags=create_new_console,
                 stdout=open(log_file, 'w'),
-                stderr=subprocess.STDOUT
+                stderr=subprocess.STDOUT,
+                cwd=current_dir  # Establecer el directorio de trabajo al directorio del script
+            )
+        elif platform.system() == "Darwin":
+            # Para macOS, usar osascript para abrir una nueva ventana en Terminal
+            terminal_cmd = ["osascript", "-e", f'tell app "Terminal" to do script "{" ".join(cmd)}"']
+            process = subprocess.Popen(
+                terminal_cmd,
+                stdout=open(log_file, 'w'),
+                stderr=subprocess.STDOUT,
+                cwd=current_dir  # Establecer el directorio de trabajo al directorio del script
             )
         else:
-            # Para Unix/Linux, usar xterm
+            # Para Linux, usar xterm
             terminal_cmd = ['xterm', '-title', process_name, '-e']
             full_cmd = terminal_cmd + [' '.join(cmd)]
             process = subprocess.Popen(
                 full_cmd,
                 stdout=open(log_file, 'w'),
-                stderr=subprocess.STDOUT
+                stderr=subprocess.STDOUT,
+                cwd=current_dir  # Establecer el directorio de trabajo al directorio del script
             )
 
         return process, log_file
 
     def launch_taxi(self, taxi_data: Dict, taxi_id: int):
         """Lanza un proceso de taxi con los datos proporcionados"""
+        # Obtener la ruta absoluta de taxi.py en el directorio actual
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        taxi_script_path = os.path.join(current_dir, 'taxi.py')
+
         cmd = [
-            sys.executable, 'taxi.py',
+            sys.executable, taxi_script_path,  # Usar la ruta absoluta del archivo taxi.py
             str(taxi_data['N']),
             str(taxi_data['M']),
             str(taxi_data['pos_x']),
@@ -92,8 +110,12 @@ class MultiNodeLauncher:
 
     def launch_user(self, user_data: Dict, user_id: int):
         """Lanza un proceso de usuario con los datos proporcionados"""
+        # Obtener la ruta absoluta de usuario.py en el directorio actual
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        user_script_path = os.path.join(current_dir, 'usuario.py')
+
         cmd = [
-            sys.executable, 'usuario.py',
+            sys.executable, user_script_path,  # Usar la ruta absoluta del archivo usuario.py
             str(user_data['pos_x']),
             str(user_data['pos_y'])
         ]

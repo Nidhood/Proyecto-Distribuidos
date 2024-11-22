@@ -3,6 +3,7 @@ import json
 import logging
 import time
 import uuid
+import sys
 from datetime import datetime
 
 
@@ -86,12 +87,22 @@ class UsuarioNode:
 
 def main():
     print("=== 👤 Sistema de Solicitud de Taxi 👤 ===")
-    pos_x = int(input("📍 Ingrese su posición X: "))
-    pos_y = int(input("📍 Ingrese su posición Y: "))
 
+    # Verificar si los parámetros fueron pasados por la línea de comandos
+    if len(sys.argv) == 3:  # Comprobar si hay dos argumentos (pos_x y pos_y)
+        pos_x = int(sys.argv[1])
+        pos_y = int(sys.argv[2])
+    else:
+        # Si no se pasaron por la línea de comandos, pedirlos al usuario
+        pos_x = int(input("📍 Ingrese su posición X: "))
+        pos_y = int(input("📍 Ingrese su posición Y: "))
+
+    # Crear el nodo de usuario con las posiciones
     usuario = UsuarioNode(
         posicion={'lat': pos_x, 'lng': pos_y}
     )
+
+    # Solicitar un taxi
     usuario.solicitar_taxi()
 
 

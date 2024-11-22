@@ -278,3 +278,6 @@ Para preguntas o sugerencias, por favor abrir un issue en el repositorio.
 ---
 
 Si necesitas realizar más ajustes o incluir información adicional, ¡házmelo saber!
+
+prometheus --config.file=prometheus.yml
+brew services start grafana

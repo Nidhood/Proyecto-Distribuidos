@@ -39,6 +39,12 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         self.publisher.connect("tcp://localhost:5557")
         self.metrics = TaxiMetrics(port=8000)
 
+        # Inicializar contadores de servicio
+        self.total_service_requests = 0
+        self.successful_services = 0
+        self.failed_services = 0
+        self.timeout_services = 0
+
         for topic in ["solicitud_servicio", "registro_taxi", "posicion_taxi"]:
             self.subscriber.setsockopt_string(zmq.SUBSCRIBE, topic)
 
@@ -47,6 +53,7 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         self.registered_taxis = set()
 
         self.secondary_address = secondary_address
+        self.update_taxi_metrics()
 
         # Verificar el estado del servidor primario
         if self.check_primary_health():
@@ -131,9 +138,12 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         message = self.subscriber.recv_string()
                         if " " in message:
                             topic, message_data = message.split(" ", 1)
+                            message_id = str(uuid.uuid4())  # o usar ID del mensaje si existe
                             self.metrics.record_message(topic)
+                            self.metrics.record_message_timestamp('solicitud_servicio', message_id)
                             data = json.loads(message_data)
                             if topic == "solicitud_servicio":
+                                self.metrics.record_message_timestamp('solicitud_servicio', message_id)
                                 self.handle_service_request(data)
                             elif topic == "registro_taxi":
                                 self.handle_taxi_registration(data)
@@ -153,6 +163,8 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
         try:
             service_id = data['id_servicio']
             if service_id in self.servicios_activos:
+                self.metrics.service_counter.labels(status='completed').inc()
+                self.metrics.service_outcomes.labels(outcome='success').inc()
                 # Actualizar estado en la base de datos
                 request = taxi_service_pb2.UpdateServiceRequest(
                     service_id=service_id,
@@ -173,7 +185,6 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         taxi_id=data['id_taxi'],
                         increment_successful=True
                     )
-                    self.metrics.record_service_completion(True)
                     self.db_stub.UpdateTaxiStats(update_taxi_request)
 
                     # Resto del código existente...
@@ -197,23 +208,44 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                     del self.servicios_activos[service_id]
                     self.logger.info(f"✅ Servicio {service_id} completado correctamente")
 
+                    start_time = self.servicios_activos[service_id].get('start_time', time.time())
+                    service_duration = time.time() - start_time
+                    self.metrics.service_processing_time.labels(service_type='complete').observe(
+                        service_duration * 1000)
                     # Replicar estado después de la actualización
                     self.replicate_state()
                 else:
-                    self.metrics.record_service_completion(False)
+                    self.metrics.service_outcomes.labels(outcome='failure').inc()
                     self.logger.error(f"❌ Error al actualizar servicio en la base de datos: {response.message}")
 
             else:
+                self.metrics.service_outcomes.labels(outcome='failure').inc()
                 self.logger.warning(f"⚠️ Servicio {service_id} no encontrado en servicios activos")
 
         except Exception as e:
-            self.metrics.record_service_completion(False)
+            self.metrics.service_outcomes.labels(outcome='error').inc()
             self.logger.error(f"❌ Error al manejar completación de servicio: {e}")
 
     def update_taxi_metrics(self):
-        available_taxis = sum(1 for taxi in self.taxis.values() if taxi['estado'] == 'AVAILABLE')
-        busy_taxis = sum(1 for taxi in self.taxis.values() if taxi['estado'] == 'BUSY')
-        self.metrics.update_active_taxis(available_taxis, busy_taxis)
+        """Actualiza todas las métricas relacionadas con taxis activos"""
+        try:
+            # Contar taxis por estado
+            available_count = sum(1 for taxi in self.taxis.values() if taxi['estado'] == 'AVAILABLE')
+            busy_count = sum(1 for taxi in self.taxis.values() if taxi['estado'] == 'BUSY')
+            total_count = len(self.taxis)
+
+            # Actualizar métricas de taxis activos
+            self.metrics.active_taxis.labels(status='available').set(available_count)
+            self.metrics.active_taxis.labels(status='busy').set(busy_count)
+            self.metrics.active_taxis.labels(status='total').set(total_count)
+
+            # Calcular y actualizar tasa de ocupación
+            if total_count > 0:
+                occupation_rate = (busy_count / total_count) * 100
+                self.metrics.active_taxis.labels(status='occupation_rate').set(occupation_rate)
+
+        except Exception as e:
+            self.logger.error(f"❌ Error al actualizar métricas de taxis: {e}")
 
     def PromoteToPrimary(self, request, context):
         """Promueve el servidor secundario a primario"""
@@ -232,10 +264,10 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
     def handle_service_request(self, data):
         try:
             start_time = time.time()
+            self.total_service_requests += 1
             taxi_id = self.encontrar_taxi_mas_cercano(data['posicion'])
 
             if not taxi_id:
-                self.metrics.record_service_request('failed')
                 error_message = {
                     'tipo': 'resultado_servicio',
                     'subtipo': 'error',
@@ -267,6 +299,12 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
             response = self.db_stub.CreateService(request)
 
             if response.success:
+                self.successful_services += 1
+                self.metrics.record_service('requested')
+                self.metrics.service_counter.labels(status='completed').inc()
+                self.metrics.service_outcomes.labels(outcome='success').inc()
+                success_rate = (self.successful_services / self.total_service_requests) * 100
+                self.metrics.service_counter.labels(status='success_rate').inc(success_rate)
 
                 # Actualizar contador total_services del taxi
                 update_taxi_request = taxi_service_pb2.UpdateTaxiStatsRequest(
@@ -305,28 +343,32 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 self.logger.info(f"✅ Servicio {service_id} asignado al taxi {taxi_id}")
 
                 duration = time.time() - start_time
-                self.metrics.record_assignment_time(duration)
+                self.metrics.assignment_time.observe(duration * 1000)
                 distance = self.calcular_distancia(
                     self.taxis[taxi_id]['posicion'],
                     data['posicion']
                 )
-                self.metrics.record_distance_to_client(distance)
-                self.metrics.record_service_request('success')
-
+                self.metrics.distance_to_client.observe(distance)
+                self.update_taxi_metrics()
                 # Replicar estado después de la actualización
                 self.replicate_state()
 
             else:
+                self.failed_services += 1
+                self.metrics.service_counter.labels(status='failed').inc()
+                self.metrics.service_outcomes.labels(outcome='failure').inc()
                 error_message = {
                     'tipo': 'resultado_servicio',
                     'subtipo': 'error',
                     'id_cliente': data['id_cliente'],
                     'mensaje': 'Error al crear el servicio'
                 }
-                self.metrics.record_service_request('failed')
                 self.publisher.send_string(f"resultado_servicio {json.dumps(error_message)}")
 
         except Exception as e:
+            self.failed_services += 1
+            self.metrics.service_counter.labels(status='failed').inc()
+            self.metrics.service_outcomes.labels(outcome='error').inc()
             self.logger.error(f"❌ Error al manejar solicitud de servicio: {e}")
             error_message = {
                 'tipo': 'resultado_servicio',
@@ -334,12 +376,11 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                 'id_cliente': data['id_cliente'],
                 'mensaje': f'Error interno: {str(e)}'
             }
-            self.metrics.record_service_request('failed')
             self.publisher.send_string(f"resultado_servicio {json.dumps(error_message)}")
 
         finally:
-            duration = time.time() - start_time
-            self.metrics.service_response_time.labels(request_type='service_request').observe(duration)
+            duration_ms = (time.time() - start_time) * 1000
+            self.metrics.record_service_outcome('success', duration_ms)
 
     def handle_taxi_registration(self, data):
         """Maneja el registro de nuevos taxis"""
@@ -437,12 +478,17 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
     def cleanup_completed_services(self):
         """Limpia los servicios completados y restaura el estado de los taxis"""
         current_time = time.time()
+        timeout_services = 0
         completed_services = []
 
         for service_id, service_info in list(self.servicios_activos.items()):
             # Timeout de 30 minutos en lugar de 30 segundos
             if current_time - service_info['start_time'] >= 1800:  # 30 * 60 seconds
                 taxi_id = service_info['taxi_id']
+                self.timeout_services += 1
+                timeout_services += 1
+                self.metrics.service_counter.labels(status='timeout').inc()
+                self.metrics.service_outcomes.labels(outcome='timeout').inc()
                 if taxi_id in self.taxis:
                     # Intentar completar automáticamente el servicio
                     try:
@@ -455,6 +501,11 @@ class TaxiServer(taxi_service_pb2_grpc.TaxiDatabaseServiceServicer):
                         completed_services.append(service_id)
                     except Exception as e:
                         self.logger.error(f"Error completando servicio automáticamente: {e}")
+
+        if timeout_services > 0:
+            self.update_taxi_metrics()
+            timeout_rate = (self.timeout_services / self.total_service_requests) * 100
+            self.metrics.service_counter.labels(status='timeout_rate').set(timeout_rate)
 
         for service_id in completed_services:
             del self.servicios_activos[service_id]

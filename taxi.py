@@ -1,10 +1,10 @@
 import json
 import logging
 import threading
-import time
 import uuid
 import zmq
-from datetime import datetime
+import sys
+import time
 import math
 
 
@@ -222,6 +222,8 @@ class TaxiNode:
 
     def stop(self):
         self.logger.info("🛑 Deteniendo taxi...")
+        self.estado = 'OFFLINE'
+        self.actualizar_posicion()
         self.activo = False
         time.sleep(1)
         self.subscriber.close()
@@ -232,12 +234,23 @@ class TaxiNode:
 
 def main():
     print("=== 🚕 Iniciando nuevo taxi 🚕 ===")
-    N = int(input("📏 Ingrese el tamaño N de la cuadrícula: "))
-    M = int(input("📏 Ingrese el tamaño M de la cuadrícula: "))
-    pos_x = float(input("📍 Ingrese la posición inicial X: "))
-    pos_y = float(input("📍 Ingrese la posición inicial Y: "))
-    velocidad = float(input("🚀 Ingrese la velocidad en km/h: "))
-    num_servicios = int(input("🎯 Ingrese el número máximo de servicios: "))
+
+    # Verificar si los parámetros fueron pasados por la línea de comandos
+    if len(sys.argv) == 7:  # Comprobar si hay 6 argumentos después del nombre del script
+        N = int(sys.argv[1])
+        M = int(sys.argv[2])
+        pos_x = float(sys.argv[3])
+        pos_y = float(sys.argv[4])
+        velocidad = float(sys.argv[5])
+        num_servicios = int(sys.argv[6])
+    else:
+        # Si no se pasaron por la línea de comandos, pedirlos al usuario
+        N = int(input("📏 Ingrese el tamaño N de la cuadrícula: "))
+        M = int(input("📏 Ingrese el tamaño M de la cuadrícula: "))
+        pos_x = float(input("📍 Ingrese la posición inicial X: "))
+        pos_y = float(input("📍 Ingrese la posición inicial Y: "))
+        velocidad = float(input("🚀 Ingrese la velocidad en km/h: "))
+        num_servicios = int(input("🎯 Ingrese el número máximo de servicios: "))
 
     taxi = TaxiNode(
         N=N,
